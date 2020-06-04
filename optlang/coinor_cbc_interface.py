@@ -34,19 +34,25 @@ from optlang.expression_parsing import parse_optimization_expression
 from optlang import interface
 from optlang import symbolics
 
-from mip import Model, xsum, maximize, BINARY, INTEGER, CONTINUOUS
+from mip import Model as mipModel
+from mip import xsum, maximize, BINARY, INTEGER, CONTINUOUS, OptimizationStatus
 
 log = logging.getLogger(__name__)
 
-# TODO: get the right types for coinor_cbc
-# _COINOR_CBC_STATUS_TO_STATUS = {
-#     GLP_UNDEF: interface.UNDEFINED,
-#     GLP_FEAS: interface.FEASIBLE,
-#     GLP_INFEAS: interface.INFEASIBLE,
-#     GLP_NOFEAS: interface.INFEASIBLE,
-#     GLP_OPT: interface.OPTIMAL,
-#     GLP_UNBND: interface.UNBOUNDED
-# }
+
+_MIP_STATUS_TO_STATUS = {
+    OptimizationStatus.CUTOFF: interface.CUTOFF,
+    OptimizationStatus.ERROR: interface.ABORTED,
+    OptimizationStatus.FEASIBLE: interface.FEASIBLE,
+    OptimizationStatus.INFEASIBLE: interface.INFEASIBLE,
+    OptimizationStatus.INT_INFEASIBLE: interface.SPECIAL,
+    OptimizationStatus.LOADED: interface.LOADED,
+    OptimizationStatus.NO_SOLUTION_FOUND: interface.NOFEASIBLE,
+    OptimizationStatus.OPTIMAL: interface.OPTIMAL,
+    OptimizationStatus.UNBOUNDED: interface.UNBOUNDED
+}
+
+# TODO: set sense (goes in objective)
 
 
 _MIP_VTYPE_TO_VTYPE = {
@@ -66,16 +72,6 @@ class Variable(interface.Variable):
         super(Variable, self).__init__(name, **kwargs)
 
     # TOD0: implement _coinor_cbc_ methods (may not need some)
-
-    @property
-    def _index(self):
-        if self.problem is not None:
-            i = self.problem._coinor_cbc_find_col(str(self.name))
-            if i:
-                return i
-            raise IndexError(
-                "Could not determine column index for variable %s" % self)
-        return None
 
     @interface.Variable.lb.setter
     def lb(self, value):
@@ -135,6 +131,114 @@ class Variable(interface.Variable):
 
 
 
+@six.add_metaclass(inheritdocstring)
+class Configuration(interface.MathematicalProgrammingConfiguration):
+    def __init__(self, verbosity=0, tolerance=1e-10, timeout=float('inf'), *args, **kwargs):
+        super(Configuration, self).__init__(*args, **kwargs)
+        self.verbosity = verbosity
+        self.tolerance = tolerance
+        self.timeout = timeout
+
+    @property
+    def verbosity(self):
+        return self._verbosity
+
+    @verbosity.setter
+    def verbosity(self, value):
+        if value not in (0, 1):
+            raise ValueError('Invalid verbosity')
+        self._verbosity = value
+
+    @property
+    def presolve(self):
+        return False
+
+    @presolve.setter
+    def presolve(self, value):
+        if value is not False:
+            raise ValueError("The COIN-OR Cbc solver has no presolve capabilities")
+
+    @property
+    def timeout(self):
+        return self._timeout
+
+    @timeout.setter
+    def timeout(self, value):
+        self._timeout = value
+
+    @property
+    def tolerance(self):
+        return self._tolerance
+
+    @tolerance.setter
+    def tolerance(self, value):
+        self._tolerance = value
+
+@six.add_metaclass(inheritdocstring)
+class Model(interface.Model):
+
+    def _configure_model(self):
+        self.problem.verbose = self.configuration.verbosity
+        self.problem.max_mip_gap_abs = self.configuration.tolerance
+
+    def _initialize_problem(self):
+        self.problem = mipModel()
+
+    def _initialize_model_from_problem(self, problem):
+        if not isinstance(problem, mipModel):
+            raise TypeError("Problem must be an instance of mipModel, not " + repr(type(problem)))
+        self.problem = problem
+
+    def _add_variables(self, variables):
+        super(Model, self)._add_variables(variables)
+        for var in variables:
+            # TODO: may need to handle obj, column options
+            self.problem.add_var(name=var.name,
+                                 var_type=_VTYPE_TO_MIP_VTYPE[var.type],
+                                 lb=var.lb,
+                                 ub=var.ub)
+
+    def _remove_variables(self, variables):
+        super(Model, self)._remove_variables(variables)
+        for var in variables:
+            self.problem.remove(self.problem.var_by_name(var.name))
+
+    def _add_constraints(self, constraints, sloppy=False):
+        super(Model, self)._add_constraints(constraints, sloppy=sloppy)
+
+        for constraint in constraints:
+            self.model += constraint # TODO: come back after impl constraint class
+
+
+    def _remove_constraints(self, constraints):
+        super(Model, self)._remove_constraints(constraints)
+        for cons in constraints:
+            self.problem.remove(self.problem.constr_by_name(cons.name))
+
+    def _optimize(self):
+        self._configure_model()
+        # TODO: could pass in max_nodes, max_solutions, relax by setting them
+        #       in configuration
+        status = self.problem.optimize(max_seconds=self.configuration.timeout)
+        # TODO: process status
+        return status
+
+    # TODO: implement after objective class is done
+    @interface.Model.objective.setter
+    def objective(self, value):
+        super(Model, Model).objective.fset(self, value)
+        value.problem = None
+        if value is None:
+            self.problem.objective = {}
+        else:
+            offset, coefficients, _ = parse_optimization_expression(value)
+            self.problem.objective = {var.name: coef for var, coef in coefficients.items()}
+            self.problem.offset = offset
+            self.problem.direction = value.direction
+        value.problem = self
+
+
+
 if __name__ == '__main__':
     import pickle
 
@@ -142,24 +246,29 @@ if __name__ == '__main__':
     x2 = Variable('x2', lb=0)
     x3 = Variable('x3', lb=0)
 
+    # Variable tests
     assert x1.name == 'x1'
     assert x1.lb == 0
     assert x1.ub == None
     assert x1.type == 'continuous'
 
+
     assert x1.problem == None
 
     x1.name = 'x1_name_change'
+
     assert x1.name == 'x1_name_change'
     x1.name = 'x1'
-
     assert x1.primal == None
+    x1.lb = 1
+    assert x1.lb == 1
+    x1.lb = 0
 
     # c1 = Constraint(x1 + x2 + x3, lb=-100, ub=100, name='c1')
     # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
     # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
     # obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
-    # model = Model(name='Simple model')
+    model = Model(name='Simple model')
     # model.objective = obj
     # model.add([c1, c2, c3])
     # status = model.optimize()

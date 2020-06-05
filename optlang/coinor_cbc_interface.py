@@ -35,7 +35,8 @@ from optlang import interface
 from optlang import symbolics
 
 from mip import Model as mipModel
-from mip import xsum, maximize, BINARY, INTEGER, CONTINUOUS, OptimizationStatus
+from mip import (BINARY, INTEGER, CONTINUOUS, OptimizationStatus,
+                 MINIMIZE, MAXIMIZE, xsum)
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,9 @@ _VTYPE_TO_MIP_VTYPE = dict(
     [(val, key) for key, val in six.iteritems(_MIP_VTYPE_TO_VTYPE)]
 )
 
+def mip_direction(direction):
+    return MAXIMIZE if direction is 'max' else MINIMIZE
+
 
 @six.add_metaclass(inheritdocstring)
 class Variable(interface.Variable):
@@ -92,14 +96,11 @@ class Variable(interface.Variable):
 
     @interface.Variable.type.setter
     def type(self, value):
-        try:
-            coinor_cbc_kind = _VTYPE_TO_MIP_VTYPE[value]
-        except KeyError:
+        if not value in _VTYPE_TO_MIP_VTYPE:
             raise ValueError(
-                "COIN-OR CBC cannot handle variables of type %s. " % value +
-                "The following variable types are available:\n" +
-                " ".join(_VTYPE_TO_MIP_VTYPE.keys())
-            )
+                'COIN-OR CBC cannot handle variables of type %s. ' % value +
+                'The following variable types are available:\n' +
+                ' '.join(_VTYPE_TO_MIP_VTYPE.keys()))
 
         if self.problem is not None:
             self.problem._coinor_cbc_set_col_kind(self._index, coinor_cbc_kind)
@@ -112,15 +113,15 @@ class Variable(interface.Variable):
 
     @property
     def primal(self):
-        if self.problem is not None:
-            return self.problem.problem.get_var_primal(self.name)
-        return None
+        if self.problem is None:
+            return None
+        return self.problem.problem.get_var_primal(self.name)
 
     @property
     def dual(self):
-        if self.problem is not None:
-            return self.problem.problem.get_var_dual(self.name)
-        return None
+        if self.problem is None:
+            return None
+        return self.problem.problem.get_var_dual(self.name)
 
     @interface.Variable.name.setter
     def name(self, value):
@@ -129,6 +130,79 @@ class Variable(interface.Variable):
         if getattr(self, 'problem', None) is not None:
             self.problem._coinor_cbc_set_col_name(old_name, str(value))
 
+
+@six.add_metaclass(inheritdocstring)
+class Objective(interface.Objective):
+    def __init__(self, expression, sloppy=False, **kwargs):
+        super(Objective, self).__init__(expression, sloppy=sloppy, **kwargs)
+        if not (sloppy or self.is_Linear):
+            raise ValueError(
+                'COIN-OR Cbc only supports linear objectives. %s is not linear.' % self)
+
+    # TODO: implement
+    def _get_expression(self):
+        if self.problem is not None:
+            coefficients_dict = self.problem.problem.objective
+            coefficients_dict = {
+                self.problem._variables[name]: coef for name, coef in coefficients_dict.items() if name in self.problem._variables
+            }
+            self._expression = symbolics.add(*(v * k for k, v in coefficients_dict.items())) + self.problem.problem.offset
+        return self._expression
+
+    @property
+    def value(self):
+        if getattr(self, 'problem', None) is None:
+            return None
+        return self.problem.problem.objective_value
+
+    @interface.Objective.direction.setter
+    def direction(self, value):
+        super(Objective, self.__class__).direction.fset(self, value)
+        if getattr(self, 'problem', None) is not None:
+            self.problem.problem.sense = mip_direction(value.direction)
+
+    # TODO: implement
+    def coefficient_dict(self):
+        if self.expression.is_Add:
+            coefficient_dict = {variable: coef for variable, coef in
+                                self.expression.as_coefficients_dict().items() if variable.is_Symbol}
+        elif self.expression.is_Atom and self.expression.is_Symbol:
+            coefficient_dict = {self.expression: 1}
+        elif self.expression.is_Mul and len(self.expression.args) <= 2 and self.expression.args[1].is_Symbol:
+            args = self.expression.args
+            coefficient_dict = {args[1]: float(args[0])}
+        elif self.expression.is_Number:
+            coefficient_dict = {}
+        else:
+            raise ValueError('Invalid expression: ' + str(self.expression))
+        coefficient_dict = {var.name: float(coef) for var, coef in coefficient_dict.items()}
+        return coefficient_dict
+
+    def set_linear_coefficients(self, coefficients):
+        if self.problem is None:
+            raise Exception('Can\'t change coefficients if objective is not associated with a model.')
+
+        self.problem.update()
+
+        # Function returning mip.Var object given the var name
+        var_by_name = self.problem.problem.var_by_name
+
+        # TODO: may need to convert float to numbers.Real
+        coeffs = {var_by_name(var.name): coef for var, coef in coefficients.items()}
+        self.problem.problem.objective.set_expr(coeffs)
+
+    def get_linear_coefficients(self, variables):
+        if self.problem is None:
+            raise Exception('Can\'t get coefficients from solver if objective is not in a model')
+
+        self.problem.update()
+
+        # Dictionary {mip.Var: coefficient}
+        mip_vars = self.problem.problem.objective.expr
+        # Function returning mip.Var object given the var name
+        var_by_name = self.problem.problem.var_by_name
+
+        return {var: float(mip_vars[var_by_name(var.name)]) for var in variables}
 
 
 @six.add_metaclass(inheritdocstring)
@@ -155,8 +229,8 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
 
     @presolve.setter
     def presolve(self, value):
-        if value is not False:
-            raise ValueError("The COIN-OR Cbc solver has no presolve capabilities")
+        if value:
+            raise ValueError('The COIN-OR Cbc solver has no presolve capabilities')
 
     @property
     def timeout(self):
@@ -182,11 +256,12 @@ class Model(interface.Model):
         self.problem.max_mip_gap_abs = self.configuration.tolerance
 
     def _initialize_problem(self):
+        # problem has sense attribute
         self.problem = mipModel()
 
     def _initialize_model_from_problem(self, problem):
         if not isinstance(problem, mipModel):
-            raise TypeError("Problem must be an instance of mipModel, not " + repr(type(problem)))
+            raise TypeError('Problem must be an instance of mipModel, not ' + repr(type(problem)))
         self.problem = problem
 
     def _add_variables(self, variables):
@@ -220,23 +295,22 @@ class Model(interface.Model):
         # TODO: could pass in max_nodes, max_solutions, relax by setting them
         #       in configuration
         status = self.problem.optimize(max_seconds=self.configuration.timeout)
-        # TODO: process status
-        return status
 
-    # TODO: implement after objective class is done
+        # TODO: make more robust. See glpk_interface.py
+        #       handle INT_INFEASIBLE case
+
+        return _MIP_STATUS_TO_STATUS[status]
+
     @interface.Model.objective.setter
     def objective(self, value):
         super(Model, Model).objective.fset(self, value)
-        value.problem = None
-        if value is None:
-            self.problem.objective = {}
-        else:
-            offset, coefficients, _ = parse_optimization_expression(value)
-            self.problem.objective = {var.name: coef for var, coef in coefficients.items()}
-            self.problem.offset = offset
-            self.problem.direction = value.direction
-        value.problem = self
+        self.update() # update to get new vars
 
+        offset, coeffs, _ = parse_optimization_expression(value)
+        self.problem.objective = offset + xsum(coef * self.problem.var_by_name(var.name)
+                                               for var, coef in coeffs.itmes())
+        self.problem.sense = mip_direction(value.direction)
+        value.problem = self
 
 
 if __name__ == '__main__':
@@ -267,21 +341,21 @@ if __name__ == '__main__':
     # c1 = Constraint(x1 + x2 + x3, lb=-100, ub=100, name='c1')
     # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
     # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
-    # obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
+    obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
     model = Model(name='Simple model')
-    # model.objective = obj
+    #model.objective = obj
     # model.add([c1, c2, c3])
-    # status = model.optimize()
-    # print("status:", model.status)
-    # print("objective value:", model.objective.value)
+    #status = model.optimize()
+    #print('status:', model.status)
+    #print('objective value:', model.objective.value)
 
     # for var_name, var in model.variables.items():
-    #     print(var_name, "=", var.primal)
+    #     print(var_name, '=', var.primal)
 
     # print(model)
 
     # problem = glp_create_prob()
-    # glp_read_lp(problem, None, "tests/data/model.lp")
+    # glp_read_lp(problem, None, 'tests/data/model.lp')
 
     # solver = Model(problem=problem)
     # print(solver.optimize())
@@ -290,11 +364,11 @@ if __name__ == '__main__':
     # import time
 
     # t1 = time.time()
-    # print("pickling")
+    # print('pickling')
     # pickle_string = pickle.dumps(solver)
     # resurrected_solver = pickle.loads(pickle_string)
     # t2 = time.time()
-    # print("Execution time: %s" % (t2 - t1))
+    # print('Execution time: %s' % (t2 - t1))
 
     # resurrected_solver.optimize()
-    # print("Halelujah!", resurrected_solver.objective.value)
+    # print('Halelujah!', resurrected_solver.objective.value)

@@ -165,12 +165,25 @@ class Objective(interface.Objective):
 
         self.problem.update()
 
-        # Function returning mip.Var object given the var name
-        var_by_name = self.problem.problem.var_by_name
+        # Update Objective member variable
+        coeffs = self._expression.as_coefficients_dict()
+        coeffs.update(coefficients)
+        self._expression = symbolics.add(*(var * coef for var, coef in coeffs.items()))
 
-        # TODO: may need to convert float to numbers.Real
-        coeffs = {var_by_name(var.name): coef for var, coef in coefficients.items()}
-        self.problem.problem.objective.set_expr(coeffs)
+
+        # Update corresponding model
+
+        # Function returning mip.Var object given the var name
+        # var_by_name = self.problem.problem.var_by_name
+        # coeffs = {var_by_name(var.name): coef for var, coef in coefficients.items()}
+        # self.problem.problem.objective.set_expr(coeffs)
+
+        # TODO: consider using something similar to above code which may be faster.
+        #       it currently has issues with offset var being of type int. May
+        #       have other issues, see if there is an update_expr
+
+        self.problem.objective = self
+
 
     def get_linear_coefficients(self, variables):
         if self.problem is None:
@@ -179,11 +192,11 @@ class Objective(interface.Objective):
         self.problem.update()
 
         # Dictionary {mip.Var: coefficient}
-        mip_vars = self.problem.problem.objective.expr
+        mip_coeffs = self.problem.problem.objective.expr
         # Function returning mip.Var object given the var name
         var_by_name = self.problem.problem.var_by_name
 
-        return {var: float(mip_vars[var_by_name(var.name)]) for var in variables}
+        return {var: float(mip_coeffs[var_by_name(var.name)]) for var in variables}
 
 
 @six.add_metaclass(inheritdocstring)
@@ -294,6 +307,7 @@ class Model(interface.Model):
 
         self.problem.objective = offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
                                                for var, coef in coeffs.items())
+
         self.problem.sense = mip_direction(value.direction)
         value.problem = self
 
@@ -326,7 +340,7 @@ if __name__ == '__main__':
     # c1 = Constraint(x1 + x2 + x3, lb=-100, ub=100, name='c1')
     # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
     # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
-    obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
+    obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
 
     assert obj.value == None
     assert obj.direction == 'max'
@@ -336,10 +350,17 @@ if __name__ == '__main__':
 
     assert obj.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 6, x3: 4}
 
+    print(obj)
+
+    obj.set_linear_coefficients({x1: 11., x2: 6., x3: 4., 1:10})
+
+    print(obj)
+
     # model.add([c1, c2, c3])
     status = model.optimize()
     print('status:', model.status)
     print('objective value:', model.objective.value)
+    assert model.objective.value == 115.0
 
     for var_name, var in model.variables.items():
         print(var_name, '=', var.primal)

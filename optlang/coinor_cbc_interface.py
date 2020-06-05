@@ -69,13 +69,20 @@ _VTYPE_TO_MIP_VTYPE = dict(
 def mip_direction(direction):
     return MAXIMIZE if direction is 'max' else MINIMIZE
 
+def to_float(number, ub=True):
+    """Converts None type and sympy.core.numbers.Float to float."""
+    if number is not None:
+        return float(number)
+    if ub:
+        return float('inf')
+    return -float('inf')
+
+# TODO: take care of _coinor_cbc functions
 
 @six.add_metaclass(inheritdocstring)
 class Variable(interface.Variable):
     def __init__(self, name, *args, **kwargs):
         super(Variable, self).__init__(name, **kwargs)
-
-    # TOD0: implement _coinor_cbc_ methods (may not need some)
 
     @interface.Variable.lb.setter
     def lb(self, value):
@@ -115,13 +122,14 @@ class Variable(interface.Variable):
     def primal(self):
         if self.problem is None:
             return None
-        return self.problem.problem.get_var_primal(self.name)
+        return self.problem.var_primal(self.name)
 
+    # TODO: implement var_dual
     @property
     def dual(self):
         if self.problem is None:
             return None
-        return self.problem.problem.get_var_dual(self.name)
+        return self.problem.var_dual(self.name)
 
     @interface.Variable.name.setter
     def name(self, value):
@@ -139,16 +147,6 @@ class Objective(interface.Objective):
             raise ValueError(
                 'COIN-OR Cbc only supports linear objectives. %s is not linear.' % self)
 
-    # TODO: implement
-    def _get_expression(self):
-        if self.problem is not None:
-            coefficients_dict = self.problem.problem.objective
-            coefficients_dict = {
-                self.problem._variables[name]: coef for name, coef in coefficients_dict.items() if name in self.problem._variables
-            }
-            self._expression = symbolics.add(*(v * k for k, v in coefficients_dict.items())) + self.problem.problem.offset
-        return self._expression
-
     @property
     def value(self):
         if getattr(self, 'problem', None) is None:
@@ -160,23 +158,6 @@ class Objective(interface.Objective):
         super(Objective, self.__class__).direction.fset(self, value)
         if getattr(self, 'problem', None) is not None:
             self.problem.problem.sense = mip_direction(value.direction)
-
-    # TODO: implement
-    def coefficient_dict(self):
-        if self.expression.is_Add:
-            coefficient_dict = {variable: coef for variable, coef in
-                                self.expression.as_coefficients_dict().items() if variable.is_Symbol}
-        elif self.expression.is_Atom and self.expression.is_Symbol:
-            coefficient_dict = {self.expression: 1}
-        elif self.expression.is_Mul and len(self.expression.args) <= 2 and self.expression.args[1].is_Symbol:
-            args = self.expression.args
-            coefficient_dict = {args[1]: float(args[0])}
-        elif self.expression.is_Number:
-            coefficient_dict = {}
-        else:
-            raise ValueError('Invalid expression: ' + str(self.expression))
-        coefficient_dict = {var.name: float(coef) for var, coef in coefficient_dict.items()}
-        return coefficient_dict
 
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:
@@ -264,14 +245,17 @@ class Model(interface.Model):
             raise TypeError('Problem must be an instance of mipModel, not ' + repr(type(problem)))
         self.problem = problem
 
+    def var_primal(self, name):
+        return self.problem.var_by_name(name).x
+
     def _add_variables(self, variables):
         super(Model, self)._add_variables(variables)
         for var in variables:
             # TODO: may need to handle obj, column options
             self.problem.add_var(name=var.name,
                                  var_type=_VTYPE_TO_MIP_VTYPE[var.type],
-                                 lb=var.lb,
-                                 ub=var.ub)
+                                 lb=to_float(var.lb, False),
+                                 ub=to_float(var.ub, True))
 
     def _remove_variables(self, variables):
         super(Model, self)._remove_variables(variables)
@@ -307,8 +291,9 @@ class Model(interface.Model):
         self.update() # update to get new vars
 
         offset, coeffs, _ = parse_optimization_expression(value)
-        self.problem.objective = offset + xsum(coef * self.problem.var_by_name(var.name)
-                                               for var, coef in coeffs.itmes())
+
+        self.problem.objective = offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
+                                               for var, coef in coeffs.items())
         self.problem.sense = mip_direction(value.direction)
         value.problem = self
 
@@ -316,14 +301,14 @@ class Model(interface.Model):
 if __name__ == '__main__':
     import pickle
 
-    x1 = Variable('x1', lb=0)
-    x2 = Variable('x2', lb=0)
-    x3 = Variable('x3', lb=0)
+    x1 = Variable('x1', lb=0, ub=5)
+    x2 = Variable('x2', lb=0, ub=5)
+    x3 = Variable('x3', lb=0, ub=5)
 
     # Variable tests
     assert x1.name == 'x1'
     assert x1.lb == 0
-    assert x1.ub == None
+    assert x1.ub == 5
     assert x1.type == 'continuous'
 
 
@@ -342,33 +327,21 @@ if __name__ == '__main__':
     # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
     # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
     obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
+
+    assert obj.value == None
+    assert obj.direction == 'max'
+
     model = Model(name='Simple model')
-    #model.objective = obj
+    model.objective = obj
+
+    assert obj.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 6, x3: 4}
+
     # model.add([c1, c2, c3])
-    #status = model.optimize()
-    #print('status:', model.status)
-    #print('objective value:', model.objective.value)
+    status = model.optimize()
+    print('status:', model.status)
+    print('objective value:', model.objective.value)
 
-    # for var_name, var in model.variables.items():
-    #     print(var_name, '=', var.primal)
+    for var_name, var in model.variables.items():
+        print(var_name, '=', var.primal)
 
-    # print(model)
-
-    # problem = glp_create_prob()
-    # glp_read_lp(problem, None, 'tests/data/model.lp')
-
-    # solver = Model(problem=problem)
-    # print(solver.optimize())
-    # print(solver.objective)
-
-    # import time
-
-    # t1 = time.time()
-    # print('pickling')
-    # pickle_string = pickle.dumps(solver)
-    # resurrected_solver = pickle.loads(pickle_string)
-    # t2 = time.time()
-    # print('Execution time: %s' % (t2 - t1))
-
-    # resurrected_solver.optimize()
-    # print('Halelujah!', resurrected_solver.objective.value)
+    print(model)

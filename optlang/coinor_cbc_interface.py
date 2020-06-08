@@ -88,18 +88,18 @@ class Variable(interface.Variable):
     def lb(self, value):
         interface.Variable.lb.fset(self, value)
         if self.problem is not None:
-            self.problem._coinor_cbc_set_col_bounds(self)
+            self.problem._update_var_bounds(self.name, lb=value)
 
     @interface.Variable.ub.setter
     def ub(self, value):
         interface.Variable.ub.fset(self, value)
         if self.problem is not None:
-            self.problem._coinor_cbc_set_col_bounds(self)
+            self.problem._update_var_bounds(self.name, ub=value)
 
     def set_bounds(self, lb, ub):
         super(Variable, self).set_bounds(lb, ub)
         if self.problem is not None:
-            self.problem._coinor_cbc_set_col_bounds(self)
+            self.problem._update_var_bounds(self.name, lb=lb, ub=ub)
 
     @interface.Variable.type.setter
     def type(self, value):
@@ -110,33 +110,33 @@ class Variable(interface.Variable):
                 ' '.join(_VTYPE_TO_MIP_VTYPE.keys()))
 
         if self.problem is not None:
-            self.problem._coinor_cbc_set_col_kind(self._index, coinor_cbc_kind)
+            self.problem._update_var_type(self.name, _VTYPE_TO_MIP_VTYPE[value])
         interface.Variable.type.fset(self, value)
 
-    def _get_primal(self):
-        if self.problem._coinor_cbc_is_mip():
-            return self.problem._coinor_cbc_mip_col_val(self._index)
-        return self.problem._coinor_cbc_get_col_prim(self._index)
+        if value == 'integer':
+            self.lb, self.ub = round(self.lb), round(self.ub)
+        elif value == 'binary':
+            self.lb, self.ub = 0, 1
 
     @property
     def primal(self):
         if self.problem is None:
             return None
-        return self.problem.var_primal(self.name)
+        return self.problem._var_primal(self.name)
 
-    # TODO: implement var_dual
     @property
     def dual(self):
         if self.problem is None:
             return None
-        return self.problem.var_dual(self.name)
+        return self.problem._var_dual(self.name)
 
     @interface.Variable.name.setter
     def name(self, value):
         old_name = getattr(self, 'name', None)
         super(Variable, Variable).name.fset(self, value)
         if getattr(self, 'problem', None) is not None:
-            self.problem._coinor_cbc_set_col_name(old_name, str(value))
+            # TODO: currently not supported
+            self.problem._update_var_name(old_name, self)
 
 
 @six.add_metaclass(inheritdocstring)
@@ -258,8 +258,45 @@ class Model(interface.Model):
             raise TypeError('Problem must be an instance of mipModel, not ' + repr(type(problem)))
         self.problem = problem
 
-    def var_primal(self, name):
+    def _var_primal(self, name):
+        """Used by Variable class."""
         return self.problem.var_by_name(name).x
+
+    # TODO: implement _var_dual
+    def _var_dual(self, name):
+        """Used by Variable class."""
+        return None
+
+    # TODO: implement _update_var_name
+    def _update_var_name(self, old_name, var):
+        """
+        Steps
+
+        1. find var in objective. copy the coefficient and then remove the old key
+           and add a new key with the new name
+
+        2. call _remove_variables, and then re add the variable with the new name
+        """
+        #self.update() # TODO: may not be necessary
+
+        # TODO: does removing vars, remove them from the objective or constraints?
+        #       if so we need to get the coefficient first
+        #self._remove_variables([var])
+
+        pass
+
+
+    def _update_var_bounds(self, name, ub=None, lb=None):
+        """Used by Variable class."""
+        var = self.problem.var_by_name(name)
+        if ub is not None:
+            var.ub = to_float(ub, True)
+        if lb is not None:
+            var.lb = to_float(lb, False)
+
+    def _update_var_type(self, name, var_type):
+        """Used by Variable class."""
+        self.problem.var_by_name(name).var_type = var_type
 
     def _add_variables(self, variables):
         super(Model, self)._add_variables(variables)
@@ -289,12 +326,15 @@ class Model(interface.Model):
 
     def _optimize(self):
         self._configure_model()
+        # TODO: could set self.problem.threads = -1 to use all available cores
         # TODO: could pass in max_nodes, max_solutions, relax by setting them
         #       in configuration
         status = self.problem.optimize(max_seconds=self.configuration.timeout)
 
         # TODO: make more robust. See glpk_interface.py
-        #       handle INT_INFEASIBLE case
+        #       handle INT_INFEASIBLE case. mip.Model has a relax method that
+        #       changes all integer and binary variable types to continuous.
+        #       if we call this, make sure to update the associated Variable objects.
 
         return _MIP_STATUS_TO_STATUS[status]
 
@@ -356,11 +396,24 @@ if __name__ == '__main__':
 
     print(obj)
 
+    x1.lb = 1
+    x2.ub = 6
+    x1.ub = 4.9
+
+    x3.set_bounds(2, 6)
+
+    # integer types rounds constraints x1.ub to nearest integer (5)
+    x1.type = 'integer'
+    x3.type = 'binary'
+
+    assert x3.lb == 0 and x3.ub == 1
+    assert x1.lb == 1 and x1.ub == 5
+
     # model.add([c1, c2, c3])
     status = model.optimize()
     print('status:', model.status)
     print('objective value:', model.objective.value)
-    assert model.objective.value == 115.0
+    assert model.objective.value == 105.0
 
     for var_name, var in model.variables.items():
         print(var_name, '=', var.primal)

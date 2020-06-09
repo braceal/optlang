@@ -140,6 +140,107 @@ class Variable(interface.Variable):
 
 
 @six.add_metaclass(inheritdocstring)
+class Constraint(interface.Constraint):
+    # TODO: do binary constraints count as this?
+    _INDICATOR_CONSTRAINT_SUPPORT = True
+
+    def __init__(self, expression, sloppy=False, *args, **kwargs):
+        super(Constraint, self).__init__(expression, sloppy=sloppy, *args, **kwargs)
+
+    def constraint_name(self, is_lb):
+        if is_lb:
+            return self.name + '_lower'
+        return self.name + '_upper'
+
+    @property
+    def primal(self):
+        if getattr(self, 'problem', None) is not None and self.problem.status == interface.OPTIMAL:
+            if self.lb is not None:
+                return self.lb + self.problem.problem.slack(self.constraint_name(True))
+            if self.ub is not None:
+                return self.ub - self.problem.problem.slack(self.constraint_name(False))
+        return None
+
+    # TODO: test this
+    @property
+    def dual(self):
+        if getattr(self, 'problem', None) is None:
+            return None
+        return self.problem.problem.pi
+
+    def _update_constraint_bound(self, new, old, is_lb):
+        """Updates associated model with new constraint bounds."""
+        if getattr(self, 'problem', None) is None:
+            return
+
+        # TODO: implement these functions
+        if old is None and new is not None:
+            self.problem.add_constraint(self.constraint_name(is_lb),
+                                        self.coefficient_dict(negative=is_lb),
+                                        ub=-new if is_lb else new)
+        elif new is None and old is not None:
+            self.problem.remove_constraint(self.constraint_name(is_lb))
+        elif new is not None and old is not None:
+            self.problem.set_constraint_bound(self.constraint_name(is_lb),
+                                              -new if is_lb else new)
+
+    @interface.Constraint.lb.setter
+    def lb(self, value):
+        self._check_valid_lower_bound(value)
+        if hasattr(self, '_lb'):
+            self._update_constraint_bound(value, self._lb, True)
+        self._lb = value
+
+    @interface.Constraint.ub.setter
+    def ub(self, value):
+        self._check_valid_upper_bound(value)
+        if hasattr(self, '_ub'):
+            self._update_constraint_bound(value, self._ub, False)
+        self._ub = value
+
+    def coefficient_dict(self, names=True, negative=False):
+        if self.expression.is_Add:
+            coefficient_dict = {variable: coef for variable, coef in
+                                self.expression.as_coefficients_dict().items() if variable.is_Symbol}
+            coefficient_dict = {var: float(coef) for var, coef in coefficient_dict.items()}
+        elif self.expression.is_Atom and self.expression.is_Symbol:
+            coefficient_dict = {self.expression: 1}
+        elif self.expression.is_Mul and len(self.expression.args) <= 2:
+            args = self.expression.args
+            coefficient_dict = {args[1]: float(args[0])}
+        elif self.expression.is_Number:
+            coefficient_dict = {}
+        else:
+            raise ValueError('Invalid expression: ' + str(self.expression))
+
+        if names:
+            coefficient_dict = {var.name: coef for var, coef in coefficient_dict.items()}
+
+        if negative:
+            coefficient_dict = {var: -coef for var, coef in coefficient_dict.items()}
+
+        return coefficient_dict
+
+    def set_linear_coefficients(self, coefficients):
+        if self.problem is None:
+            raise Exception('Can\'t change coefficients if constraint is not associated with a model.')
+
+        self.problem.update()
+        coefficients_dict = self.coefficient_dict(names=False)
+        coefficients_dict.update(coefficients)
+        self._expression = symbolics.add(*(v * k for k, v in coefficients_dict.items()))
+        # TODO: update self.problem with new coefficients
+
+    def get_linear_coefficients(self, variables):
+        if self.problem is None:
+            raise Exception('Can\'t get coefficients from solver if constraint is not in a model')
+
+        self.problem.update()
+        coefs = self.coefficient_dict(names=False)
+        return {v: coefs.get(v, 0) for v in variables}
+
+
+@six.add_metaclass(inheritdocstring)
 class Objective(interface.Objective):
     def __init__(self, expression, sloppy=False, **kwargs):
         super(Objective, self).__init__(expression, sloppy=sloppy, **kwargs)
@@ -315,14 +416,24 @@ class Model(interface.Model):
     def _add_constraints(self, constraints, sloppy=False):
         super(Model, self)._add_constraints(constraints, sloppy=sloppy)
 
-        for constraint in constraints:
-            self.model += constraint # TODO: come back after impl constraint class
+        for con in constraints:
+            offset, coeffs, _ = parse_optimization_expression(con)
 
+            contr = offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
+                                  for var, coef in coeffs.items())
+
+            if con.ub is not None:
+                self.problem.add_constr(contr <= con.ub, con.constraint_name(False))
+            if con.lb is not None:
+                self.problem.add_constr(-contr <= -con.lb, con.constraint_name(True))
 
     def _remove_constraints(self, constraints):
         super(Model, self)._remove_constraints(constraints)
-        for cons in constraints:
-            self.problem.remove(self.problem.constr_by_name(cons.name))
+        for con in constraints:
+            if con.lb is not None:
+                self.problem.remove(self.problem.constr_by_name(con.constraint_name(True)))
+            if con.ub is not None:
+                self.problem.remove(self.problem.constr_by_name(con.constraint_name(False)))
 
     def _optimize(self):
         self._configure_model()
@@ -353,69 +464,103 @@ class Model(interface.Model):
 
 
 if __name__ == '__main__':
-    import pickle
+    def test1():
 
-    x1 = Variable('x1', lb=0, ub=5)
-    x2 = Variable('x2', lb=0, ub=5)
-    x3 = Variable('x3', lb=0, ub=5)
+        x1 = Variable('x1', lb=0, ub=5)
+        x2 = Variable('x2', lb=0, ub=5)
+        x3 = Variable('x3', lb=0, ub=5)
 
-    # Variable tests
-    assert x1.name == 'x1'
-    assert x1.lb == 0
-    assert x1.ub == 5
-    assert x1.type == 'continuous'
+        # Variable tests
+        assert x1.name == 'x1'
+        assert x1.lb == 0
+        assert x1.ub == 5
+        assert x1.type == 'continuous'
 
 
-    assert x1.problem == None
+        assert x1.problem == None
 
-    x1.name = 'x1_name_change'
+        x1.name = 'x1_name_change'
 
-    assert x1.name == 'x1_name_change'
-    x1.name = 'x1'
-    assert x1.primal == None
-    x1.lb = 1
-    assert x1.lb == 1
-    x1.lb = 0
+        assert x1.name == 'x1_name_change'
+        x1.name = 'x1'
+        assert x1.primal == None
+        x1.lb = 1
+        assert x1.lb == 1
+        x1.lb = 0
 
-    # c1 = Constraint(x1 + x2 + x3, lb=-100, ub=100, name='c1')
-    # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
-    # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
-    obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
+        c1 = Constraint(x1 + x2 + x3, lb=-10, ub=10, name='c1')
+        # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
+        # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
+        obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
+        # TODO: test obj with just a constant
 
-    assert obj.value == None
-    assert obj.direction == 'max'
+        assert obj.value == None
+        assert obj.direction == 'max'
 
-    model = Model(name='Simple model')
-    model.objective = obj
+        model = Model(name='Simple model')
+        model.objective = obj
 
-    assert obj.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 6, x3: 4}
+        assert obj.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 6, x3: 4}
 
-    print(obj)
+        print(obj)
 
-    obj.set_linear_coefficients({x1: 11., x2: 6., x3: 4., 1:10})
+        obj.set_linear_coefficients({x1: 11., x2: 6., x3: 4., 1:10})
 
-    print(obj)
+        print(obj)
 
-    x1.lb = 1
-    x2.ub = 6
-    x1.ub = 4.9
+        x1.lb = 1
+        x2.ub = 6
+        x1.ub = 4.9
 
-    x3.set_bounds(2, 6)
+        x3.set_bounds(2, 6)
 
-    # integer types rounds constraints x1.ub to nearest integer (5)
-    x1.type = 'integer'
-    x3.type = 'binary'
+        # integer types rounds constraints x1.ub to nearest integer (5)
+        x1.type = 'integer'
+        x3.type = 'binary'
 
-    assert x3.lb == 0 and x3.ub == 1
-    assert x1.lb == 1 and x1.ub == 5
+        assert x3.lb == 0 and x3.ub == 1
+        assert x1.lb == 1 and x1.ub == 5
 
-    # model.add([c1, c2, c3])
-    status = model.optimize()
-    print('status:', model.status)
-    print('objective value:', model.objective.value)
-    assert model.objective.value == 105.0
+        model.add([c1])
+        # model.add([c1, c2, c3])
+        status = model.optimize()
+        print('status:', model.status)
+        print('objective value:', model.objective.value)
+        assert model.objective.value == 95.0
 
-    for var_name, var in model.variables.items():
-        print(var_name, '=', var.primal)
+        for var_name, var in model.variables.items():
+            print(var_name, '=', var.primal)
 
-    print(model)
+        print(model)
+
+
+    def test2():
+
+        # All the (symbolic) variables are declared, with a name and optionally a lower and/or upper bound.
+        x1 = Variable('x1', lb=0)
+        x2 = Variable('x2', lb=0)
+        x3 = Variable('x3', lb=0)
+
+        # A constraint is constructed from an expression of variables and a lower and/or upper bound (lb and ub).
+        c1 = Constraint(x1 + x2 + x3, ub=100)
+        c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600)
+        c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300)
+
+        # An objective can be formulated
+        obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
+
+        # Variables, constraints and objective are combined in a Model object, which can subsequently be optimized.
+        model = Model(name='Simple model')
+        model.objective = obj
+        model.add([c1, c2, c3])
+
+        status = model.optimize()
+
+        print("status:", model.status)
+        print("objective value:", model.objective.value)
+        print("----------")
+        for var_name, var in model.variables.iteritems():
+            print(var_name, "=", var.primal)
+
+    test1()
+    test2()

@@ -562,5 +562,38 @@ if __name__ == '__main__':
         for var_name, var in model.variables.iteritems():
             print(var_name, "=", var.primal)
 
-    test1()
-    test2()
+
+    def test3():
+
+        p = [10, 13, 18, 31, 7, 15]
+        w = [11, 15, 20, 35, 10, 33]
+        c, I = 47, range(len(w))
+
+        x = [Variable(type='binary', name=f'x{i}') for i in I]
+
+        obj = Objective(sum(p[i] * x[i] for i in I), direction='max')
+
+        c1 = Constraint(sum(w[i] * x[i] for i in I), ub=c)
+
+        model = Model(name='knapsack')
+        model.objective = obj
+        model.add([c1])
+
+        status = model.optimize()
+
+        assert model.objective.value == 41.0
+
+        print("status:", model.status)
+        print("objective value:", model.objective.value)
+        print("----------")
+        for var_name, var in model.variables.iteritems():
+            print(var_name, "=", var.primal)
+
+        selected = [i for i in I if x[i].primal >= 0.99]
+        print("selected items: {}".format(selected))
+
+        assert selected == [0, 3]
+
+    #test1()
+    #test2()
+    test3()

@@ -179,9 +179,9 @@ class Constraint(interface.Constraint):
             return
 
         if old is None and new is not None:
-            self.problem._add_constraints([self])
+            self.problem._add_mip_constraint(self, is_lb)
         elif new is None and old is not None:
-            self.problem._remove_constraints([self])
+            self.problem._remove_mip_constraint(self, is_lb)
         elif new is not None and old is not None:
             self.problem._update_constraint_bound(self, is_lb)
 
@@ -195,6 +195,7 @@ class Constraint(interface.Constraint):
     def ub(self, value):
         self._check_valid_upper_bound(value)
         self._ub, old_ub = value, getattr(self, '_ub', None)
+        print('ub, old_ub: ', self._ub, ' ', old_ub)
         self._update_bound(value, old_ub, False)
 
     def set_linear_coefficients(self, coefficients):
@@ -375,36 +376,59 @@ class Model(interface.Model):
     def _update_constraint_bound(self, con, is_lb):
         """Used by Constraint class."""
         name = con.constraint_name(is_lb)
-        rhs = to_float(-1*con.lb if is_lb else con.ub)
-        self.problem.constr_by_name(name).rhs = rhs
+        constr = self.problem.constr_by_name(name)
+        constr.rhs = to_float(-1*con.lb if is_lb else con.ub)
+
+    def _con_to_mip_con(self, con):
+        """Parses mip constraint linear expression from Constraint."""
+        offset, coeffs, _ = parse_optimization_expression(con)
+        return offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
+                             for var, coef in coeffs.items())
+
+    def _remove_mip_constraint(self, con, is_lb):
+        """Used by Constraint class."""
+        name = con.constraint_name(is_lb)
+        constr = self.problem.constr_by_name(name)
+        if constr is not None:
+            self.problem.remove(constr)
+
+    def _add_mip_constraint(self, con, is_lb=True, constr=None):
+        # Optimization for precomputing the parsed constr expression
+        if constr is None:
+            constr = self._con_to_mip_con(con)
+        if is_lb and con.lb is not None:
+           self.problem.add_constr(-constr <= -con.lb, con.constraint_name(True))
+        elif not is_lb and con.ub is not None:
+            self.problem.add_constr(constr <= con.ub, con.constraint_name(False))
 
     def _add_constraints(self, constraints, sloppy=False):
         super(Model, self)._add_constraints(constraints, sloppy=sloppy)
-
         for con in constraints:
-            offset, coeffs, _ = parse_optimization_expression(con)
-
-            contr = offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
-                                  for var, coef in coeffs.items())
-
-            if con.ub is not None:
-                self.problem.add_constr(contr <= con.ub, con.constraint_name(False))
-            if con.lb is not None:
-                self.problem.add_constr(-contr <= -con.lb, con.constraint_name(True))
+            constr = self._con_to_mip_con(con)
+            # Attempt to add lb and ub constraints
+            self._add_mip_constraint(con, True, constr)
+            self._add_mip_constraint(con, False, constr)
 
     def _remove_constraints(self, constraints):
         super(Model, self)._remove_constraints(constraints)
         for con in constraints:
-            if con.ub is not None:
-                self.problem.remove(self.problem.constr_by_name(con.constraint_name(False)))
-            if con.lb is not None:
-                self.problem.remove(self.problem.constr_by_name(con.constraint_name(True)))
+            # Remove lb and ub constraints
+            self._remove_mip_constraint(con, True)
+            self._remove_mip_constraint(con, False)
 
     def _optimize(self):
         self._configure_model()
         # TODO: could set self.problem.threads = -1 to use all available cores
         # TODO: could pass in max_nodes, max_solutions, relax by setting them
         #       in configuration
+        print('mip.Var')
+        for v in self.problem.vars:
+            print(f'{v.lb} <= {v} <= {v.ub}')
+        print('mip.Constr')
+        for c in self.problem.constrs:
+            print(c)
+
+
         status = self.problem.optimize(max_seconds=self.configuration.timeout)
 
         # TODO: make more robust. See glpk_interface.py
@@ -730,10 +754,10 @@ if __name__ == '__main__':
         assert model.objective.value == 1.0
 
 
-    # test1()
-    # test2()
-    # test3()
-    # test4()
-    # test_changing_constraints()
-    # test_constraint_get_linear_coefficients()
-    # test_constant_objective()
+    test1()
+    test2()
+    test3()
+    test4()
+    test_changing_constraints()
+    test_constraint_get_linear_coefficients()
+    test_constant_objective()

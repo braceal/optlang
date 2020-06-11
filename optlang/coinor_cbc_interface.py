@@ -50,11 +50,9 @@ _MIP_STATUS_TO_STATUS = {
     OptimizationStatus.LOADED: interface.LOADED,
     OptimizationStatus.NO_SOLUTION_FOUND: interface.NOFEASIBLE,
     OptimizationStatus.OPTIMAL: interface.OPTIMAL,
-    OptimizationStatus.UNBOUNDED: interface.UNBOUNDED
+    OptimizationStatus.UNBOUNDED: interface.UNBOUNDED,
+    OptimizationStatus.OTHER: interface.SPECIAL
 }
-
-# TODO: set sense (goes in objective)
-
 
 _MIP_VTYPE_TO_VTYPE = {
     CONTINUOUS: 'continuous',
@@ -66,8 +64,10 @@ _VTYPE_TO_MIP_VTYPE = dict(
     [(val, key) for key, val in six.iteritems(_MIP_VTYPE_TO_VTYPE)]
 )
 
-def mip_direction(direction):
-    return MAXIMIZE if direction is 'max' else MINIMIZE
+_MIP_DIRECTION = {
+    'max': MAXIMIZE,
+    'min': MINIMIZE
+}
 
 def to_float(number, ub=True):
     """Converts None type and sympy.core.numbers.Float to float."""
@@ -76,8 +76,6 @@ def to_float(number, ub=True):
     if ub:
         return float('inf')
     return -float('inf')
-
-# TODO: take care of _coinor_cbc functions
 
 @six.add_metaclass(inheritdocstring)
 class Variable(interface.Variable):
@@ -168,76 +166,51 @@ class Constraint(interface.Constraint):
             return None
         return self.problem.problem.pi
 
-    def _update_constraint_bound(self, new, old, is_lb):
+    def _update_bound(self, new, old, is_lb):
         """Updates associated model with new constraint bounds."""
         if getattr(self, 'problem', None) is None:
             return
 
-        # TODO: implement these functions
         if old is None and new is not None:
-            self.problem.add_constraint(self.constraint_name(is_lb),
-                                        self.coefficient_dict(negative=is_lb),
-                                        ub=-new if is_lb else new)
+            self.problem._add_constraints([self])
         elif new is None and old is not None:
-            self.problem.remove_constraint(self.constraint_name(is_lb))
+            self.problem._remove_constraints([self])
         elif new is not None and old is not None:
-            self.problem.set_constraint_bound(self.constraint_name(is_lb),
-                                              -new if is_lb else new)
+            self.problem._update_constraint_bound(self, is_lb)
 
     @interface.Constraint.lb.setter
     def lb(self, value):
         self._check_valid_lower_bound(value)
-        if hasattr(self, '_lb'):
-            self._update_constraint_bound(value, self._lb, True)
-        self._lb = value
+        self._lb, old_lb = value, getattr(self, '_lb', None)
+        self._update_bound(value, old_lb, True)
 
     @interface.Constraint.ub.setter
     def ub(self, value):
         self._check_valid_upper_bound(value)
-        if hasattr(self, '_ub'):
-            self._update_constraint_bound(value, self._ub, False)
-        self._ub = value
-
-    def coefficient_dict(self, names=True, negative=False):
-        if self.expression.is_Add:
-            coefficient_dict = {variable: coef for variable, coef in
-                                self.expression.as_coefficients_dict().items() if variable.is_Symbol}
-            coefficient_dict = {var: float(coef) for var, coef in coefficient_dict.items()}
-        elif self.expression.is_Atom and self.expression.is_Symbol:
-            coefficient_dict = {self.expression: 1}
-        elif self.expression.is_Mul and len(self.expression.args) <= 2:
-            args = self.expression.args
-            coefficient_dict = {args[1]: float(args[0])}
-        elif self.expression.is_Number:
-            coefficient_dict = {}
-        else:
-            raise ValueError('Invalid expression: ' + str(self.expression))
-
-        if names:
-            coefficient_dict = {var.name: coef for var, coef in coefficient_dict.items()}
-
-        if negative:
-            coefficient_dict = {var: -coef for var, coef in coefficient_dict.items()}
-
-        return coefficient_dict
+        self._ub, old_ub = value, getattr(self, '_ub', None)
+        self._update_bound(value, old_ub, False)
 
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:
             raise Exception('Can\'t change coefficients if constraint is not associated with a model.')
 
         self.problem.update()
-        coefficients_dict = self.coefficient_dict(names=False)
-        coefficients_dict.update(coefficients)
-        self._expression = symbolics.add(*(v * k for k, v in coefficients_dict.items()))
-        # TODO: update self.problem with new coefficients
+        coeffs = self._expression.as_coefficients_dict()
+        coeffs.update(coefficients)
+        self._expression = symbolics.add(*(var * coef for var, coef in coeffs.items()))
+
+        # _remove_constraints deletes reference to self.problem
+        problem = self.problem
+        problem._remove_constraints([self])
+        problem._add_constraints([self])
 
     def get_linear_coefficients(self, variables):
         if self.problem is None:
             raise Exception('Can\'t get coefficients from solver if constraint is not in a model')
 
         self.problem.update()
-        coefs = self.coefficient_dict(names=False)
-        return {v: coefs.get(v, 0) for v in variables}
+        coeffs = self._expression.as_coefficients_dict()
+        return {v: coeffs.get(v, 0) for v in variables}
 
 
 @six.add_metaclass(inheritdocstring)
@@ -258,31 +231,16 @@ class Objective(interface.Objective):
     def direction(self, value):
         super(Objective, self.__class__).direction.fset(self, value)
         if getattr(self, 'problem', None) is not None:
-            self.problem.problem.sense = mip_direction(value.direction)
+            self.problem.problem.sense = _MIP_DIRECTION[value.direction]
 
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:
             raise Exception('Can\'t change coefficients if objective is not associated with a model.')
 
         self.problem.update()
-
-        # Update Objective member variable
         coeffs = self._expression.as_coefficients_dict()
         coeffs.update(coefficients)
         self._expression = symbolics.add(*(var * coef for var, coef in coeffs.items()))
-
-
-        # Update corresponding model
-
-        # Function returning mip.Var object given the var name
-        # var_by_name = self.problem.problem.var_by_name
-        # coeffs = {var_by_name(var.name): coef for var, coef in coefficients.items()}
-        # self.problem.problem.objective.set_expr(coeffs)
-
-        # TODO: consider using something similar to above code which may be faster.
-        #       it currently has issues with offset var being of type int. May
-        #       have other issues, see if there is an update_expr
-
         self.problem.objective = self
 
 
@@ -291,13 +249,8 @@ class Objective(interface.Objective):
             raise Exception('Can\'t get coefficients from solver if objective is not in a model')
 
         self.problem.update()
-
-        # Dictionary {mip.Var: coefficient}
-        mip_coeffs = self.problem.problem.objective.expr
-        # Function returning mip.Var object given the var name
-        var_by_name = self.problem.problem.var_by_name
-
-        return {var: float(mip_coeffs[var_by_name(var.name)]) for var in variables}
+        coeffs = self._expression.as_coefficients_dict()
+        return {v: coeffs.get(v, 0) for v in variables}
 
 
 @six.add_metaclass(inheritdocstring)
@@ -324,6 +277,7 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
 
     @presolve.setter
     def presolve(self, value):
+        # TODO: implement if possible
         if value:
             raise ValueError('The COIN-OR Cbc solver has no presolve capabilities')
 
@@ -356,7 +310,7 @@ class Model(interface.Model):
 
     def _initialize_model_from_problem(self, problem):
         if not isinstance(problem, mipModel):
-            raise TypeError('Problem must be an instance of mipModel, not ' + repr(type(problem)))
+            raise TypeError('Problem must be an instance of mip.Model, not ' + repr(type(problem)))
         self.problem = problem
 
     def _var_primal(self, name):
@@ -413,6 +367,12 @@ class Model(interface.Model):
         for var in variables:
             self.problem.remove(self.problem.var_by_name(var.name))
 
+    def _update_constraint_bound(self, con, is_lb):
+        """Used by Constraint class."""
+        name = con.constraint_name(is_lb)
+        rhs = -1*con.lb if is_lb else con.ub
+        self.problem.constr_by_name(name).rhs = rhs
+
     def _add_constraints(self, constraints, sloppy=False):
         super(Model, self)._add_constraints(constraints, sloppy=sloppy)
 
@@ -430,10 +390,10 @@ class Model(interface.Model):
     def _remove_constraints(self, constraints):
         super(Model, self)._remove_constraints(constraints)
         for con in constraints:
-            if con.lb is not None:
-                self.problem.remove(self.problem.constr_by_name(con.constraint_name(True)))
             if con.ub is not None:
                 self.problem.remove(self.problem.constr_by_name(con.constraint_name(False)))
+            if con.lb is not None:
+                self.problem.remove(self.problem.constr_by_name(con.constraint_name(True)))
 
     def _optimize(self):
         self._configure_model()
@@ -452,14 +412,13 @@ class Model(interface.Model):
     @interface.Model.objective.setter
     def objective(self, value):
         super(Model, Model).objective.fset(self, value)
-        self.update() # update to get new vars
+        self.update()
 
         offset, coeffs, _ = parse_optimization_expression(value)
-
         self.problem.objective = offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
                                                for var, coef in coeffs.items())
 
-        self.problem.sense = mip_direction(value.direction)
+        self.problem.sense = _MIP_DIRECTION[value.direction]
         value.problem = self
 
 
@@ -533,6 +492,90 @@ if __name__ == '__main__':
 
         print(model)
 
+    def test_changing_constraints():
+
+        x1 = Variable('x1', lb=0, ub=5)
+        x2 = Variable('x2', lb=0, ub=5)
+        x3 = Variable('x3', lb=0, ub=5)
+
+        c1 = Constraint(x1 + x2 + x3, lb=-10, ub=10, name='c1')
+        c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
+        #c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
+        obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
+        # TODO: test obj with just a constant
+
+        model = Model(name='Simple model')
+        model.objective = obj
+
+        model.add([c1])
+
+
+        c1.ub = 11
+
+
+        status = model.optimize()
+
+        print('status:', model.status)
+        print('objective value:', model.objective.value)
+
+        for var_name, var in model.variables.items():
+            print(var_name, '=', var.primal)
+
+        print(model)
+
+        assert model.objective.value == 85.0
+
+
+        c1.ub = 10
+        c1.lb = 5
+
+        status = model.optimize()
+
+        print('status:', model.status)
+        print('objective value:', model.objective.value)
+
+        for var_name, var in model.variables.items():
+            print(var_name, '=', var.primal)
+
+        print(model)
+
+        assert model.objective.value == 81.0
+
+    def test_constraint_get_linear_coefficients():
+
+        x1 = Variable('x1', lb=0, ub=5)
+        x2 = Variable('x2', lb=0, ub=5)
+        x3 = Variable('x3', lb=0, ub=5)
+
+        c1 = Constraint(x1 + x2 + x3 + 1, lb=-10, ub=10, name='c1')
+        c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
+        obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
+        # TODO: test obj with just a constant
+
+        model = Model(name='Simple model')
+        model.objective = obj
+
+        model.add([c1, c2])
+
+        model.optimize()
+        print('status:', model.status)
+        print('objective value:', model.objective.value)
+        print(model)
+        for var_name, var in model.variables.iteritems():
+            print(var_name, "=", var.primal)
+
+        assert c1.get_linear_coefficients([x1, x2, x3]) == {x1: 1, x2: 1, x3: 1}
+        assert c2.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 4, x3: 5}
+
+        c1.set_linear_coefficients({x1:2, x2:2})
+        assert c1.get_linear_coefficients([x1, x2, x3]) == {x1: 2, x2: 2, x3: 1}
+
+        model.optimize()
+        print('status:', model.status)
+        print('objective value:', model.objective.value)
+        print(model)
+        for var_name, var in model.variables.iteritems():
+            print(var_name, "=", var.primal)
 
     def test2():
 
@@ -667,7 +710,24 @@ if __name__ == '__main__':
         print("objective value:", model.objective.value)
         assert model.objective.value == 547.0
 
-    #test1()
-    #test2()
-    #test3()
+    def test_constant_objective():
+        x1 = Variable('x1', lb=0, ub=5)
+        c1 = Constraint(x1, lb=-10, ub=10, name='c1')
+        obj = Objective(1, direction='max')
+        model = Model('test')
+        model.objective = obj
+        model.add(c1)
+
+        print(model)
+
+        model.optimize()
+        print(model.objective.value)
+        assert model.objective.value == 1.0
+
+    test1()
+    test2()
+    test3()
     test4()
+    test_changing_constraints()
+    test_constraint_get_linear_coefficients()
+    test_constant_objective()

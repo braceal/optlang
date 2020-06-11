@@ -69,13 +69,13 @@ _MIP_DIRECTION = {
     'min': MINIMIZE
 }
 
-def to_float(number, ub=True):
+def to_float(number, is_lb=True):
     """Converts None type and sympy.core.numbers.Float to float."""
     if number is not None:
         return float(number)
-    if ub:
-        return float('inf')
-    return -float('inf')
+    if is_lb:
+        return -float('inf')
+    return float('inf')
 
 @six.add_metaclass(inheritdocstring)
 class Variable(interface.Variable):
@@ -86,18 +86,19 @@ class Variable(interface.Variable):
     def lb(self, value):
         interface.Variable.lb.fset(self, value)
         if self.problem is not None:
-            self.problem._update_var_bounds(self.name, lb=value)
+            self.problem._update_var_lb(self.name, value)
 
     @interface.Variable.ub.setter
     def ub(self, value):
         interface.Variable.ub.fset(self, value)
         if self.problem is not None:
-            self.problem._update_var_bounds(self.name, ub=value)
+            self.problem._update_var_ub(self.name, value)
 
     def set_bounds(self, lb, ub):
         super(Variable, self).set_bounds(lb, ub)
         if self.problem is not None:
-            self.problem._update_var_bounds(self.name, lb=lb, ub=ub)
+            self.problem._update_var_lb(self.name, lb)
+            self.problem._update_var_ub(self.name, ub)
 
     @interface.Variable.type.setter
     def type(self, value):
@@ -345,13 +346,13 @@ class Model(interface.Model):
         pass
 
 
-    def _update_var_bounds(self, name, ub=None, lb=None):
+    def _update_var_lb(self, name, lb):
         """Used by Variable class."""
-        var = self.problem.var_by_name(name)
-        if ub is not None:
-            var.ub = to_float(ub, True)
-        if lb is not None:
-            var.lb = to_float(lb, False)
+        self.problem.var_by_name(name).lb = to_float(lb, True)
+
+    def _update_var_ub(self, name, ub):
+        """Used by Variable class."""
+        self.problem.var_by_name(name).ub = to_float(ub, False)
 
     def _update_var_type(self, name, var_type):
         """Used by Variable class."""
@@ -363,8 +364,8 @@ class Model(interface.Model):
             # TODO: may need to handle obj, column options
             self.problem.add_var(name=var.name,
                                  var_type=_VTYPE_TO_MIP_VTYPE[var.type],
-                                 lb=to_float(var.lb, False),
-                                 ub=to_float(var.ub, True))
+                                 lb=to_float(var.lb, True),
+                                 ub=to_float(var.ub, False))
 
     def _remove_variables(self, variables):
         super(Model, self)._remove_variables(variables)
@@ -374,7 +375,7 @@ class Model(interface.Model):
     def _update_constraint_bound(self, con, is_lb):
         """Used by Constraint class."""
         name = con.constraint_name(is_lb)
-        rhs = -1*con.lb if is_lb else con.ub
+        rhs = to_float(-1*con.lb if is_lb else con.ub)
         self.problem.constr_by_name(name).rhs = rhs
 
     def _add_constraints(self, constraints, sloppy=False):
@@ -728,10 +729,11 @@ if __name__ == '__main__':
         print(model.objective.value)
         assert model.objective.value == 1.0
 
-    test1()
-    test2()
-    test3()
-    test4()
-    test_changing_constraints()
-    test_constraint_get_linear_coefficients()
-    test_constant_objective()
+
+    # test1()
+    # test2()
+    # test3()
+    # test4()
+    # test_changing_constraints()
+    # test_constraint_get_linear_coefficients()
+    # test_constant_objective()

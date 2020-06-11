@@ -154,9 +154,9 @@ class Constraint(interface.Constraint):
     def primal(self):
         if getattr(self, 'problem', None) is not None and self.problem.status == interface.OPTIMAL:
             if self.lb is not None:
-                return self.lb + self.problem.problem.slack(self.constraint_name(True))
+                return self.lb + self.problem.problem.constr_by_name(self.constraint_name(True)).slack
             if self.ub is not None:
-                return self.ub - self.problem.problem.slack(self.constraint_name(False))
+                return self.ub - self.problem.problem.constr_by_name(self.constraint_name(False)).slack
         return None
 
     # TODO: test this
@@ -267,8 +267,6 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
 
     @verbosity.setter
     def verbosity(self, value):
-        if value not in (0, 1):
-            raise ValueError('Invalid verbosity')
         self._verbosity = value
 
     @property
@@ -301,7 +299,7 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
 class Model(interface.Model):
 
     def _configure_model(self):
-        self.problem.verbose = self.configuration.verbosity
+        self.problem.verbose = 1 if self.configuration.verbosity > 1 else 0
         self.problem.max_mip_gap_abs = self.configuration.tolerance
 
     def _initialize_problem(self):

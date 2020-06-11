@@ -112,7 +112,10 @@ class Variable(interface.Variable):
         interface.Variable.type.fset(self, value)
 
         if value == 'integer':
-            self.lb, self.ub = round(self.lb), round(self.ub)
+            if self.lb is not None:
+                self.lb = round(self.lb)
+            if self.ub is not None:
+                self.ub = round(self.ub)
         elif value == 'binary':
             self.lb, self.ub = 0, 1
 
@@ -164,7 +167,10 @@ class Constraint(interface.Constraint):
     def dual(self):
         if getattr(self, 'problem', None) is None:
             return None
-        return self.problem.problem.pi
+        if self.lb is not None:
+                return self.problem.problem.constr_by_name(self.constraint_name(True)).pi
+        if self.ub is not None:
+            return self.problem.problem.constr_by_name(self.constraint_name(False)).pi
 
     def _update_bound(self, new, old, is_lb):
         """Updates associated model with new constraint bounds."""
@@ -231,7 +237,7 @@ class Objective(interface.Objective):
     def direction(self, value):
         super(Objective, self.__class__).direction.fset(self, value)
         if getattr(self, 'problem', None) is not None:
-            self.problem.problem.sense = _MIP_DIRECTION[value.direction]
+            self.problem.problem.sense = _MIP_DIRECTION[value]
 
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:

@@ -446,6 +446,12 @@ class Model(interface.Model):
         self.problem.sense = _MIP_DIRECTION[value.direction]
         value.problem = self
 
+    def __copy__(self):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        result.__dict__.update(self.__dict__)
+        return result
+
 if __name__ == '__main__':
     def test1():
 

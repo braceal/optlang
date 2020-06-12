@@ -34,6 +34,7 @@ from optlang.expression_parsing import parse_optimization_expression
 from optlang import interface
 from optlang import symbolics
 
+from math import isclose
 from mip import Model as mipModel
 from mip import (BINARY, INTEGER, CONTINUOUS, OptimizationStatus,
                  MINIMIZE, MAXIMIZE, xsum)
@@ -76,6 +77,11 @@ def to_float(number, is_lb=True):
     if is_lb:
         return -float('inf')
     return float('inf')
+
+def to_symbolic_expr(coeffs):
+    """Converts coeffs dict to symbolic expression."""
+    return symbolics.add([var * coef for var, coef in coeffs.items()
+                          if not isclose(0, to_float(coef))])
 
 @six.add_metaclass(inheritdocstring)
 class Variable(interface.Variable):
@@ -195,7 +201,6 @@ class Constraint(interface.Constraint):
     def ub(self, value):
         self._check_valid_upper_bound(value)
         self._ub, old_ub = value, getattr(self, '_ub', None)
-        print('ub, old_ub: ', self._ub, ' ', old_ub)
         self._update_bound(value, old_ub, False)
 
     def set_linear_coefficients(self, coefficients):
@@ -205,7 +210,7 @@ class Constraint(interface.Constraint):
         self.problem.update()
         coeffs = self._expression.as_coefficients_dict()
         coeffs.update(coefficients)
-        self._expression = symbolics.add(*(var * coef for var, coef in coeffs.items()))
+        self._expression = to_symbolic_expr(coeffs)
 
         # _remove_constraints deletes reference to self.problem
         problem = self.problem
@@ -248,7 +253,7 @@ class Objective(interface.Objective):
         self.problem.update()
         coeffs = self._expression.as_coefficients_dict()
         coeffs.update(coefficients)
-        self._expression = symbolics.add(*(var * coef for var, coef in coeffs.items()))
+        self._expression = to_symbolic_expr(coeffs)
         self.problem.objective = self
 
 
@@ -379,9 +384,9 @@ class Model(interface.Model):
         constr = self.problem.constr_by_name(name)
         constr.rhs = to_float(-1*con.lb if is_lb else con.ub)
 
-    def _con_to_mip_con(self, con):
-        """Parses mip constraint linear expression from Constraint."""
-        offset, coeffs, _ = parse_optimization_expression(con)
+    def _expr_to_mip_expr(self, expr):
+        """Parses mip linear expression from expression."""
+        offset, coeffs, _ = parse_optimization_expression(expr)
         return offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
                              for var, coef in coeffs.items())
 
@@ -395,7 +400,7 @@ class Model(interface.Model):
     def _add_mip_constraint(self, con, is_lb=True, constr=None):
         # Optimization for precomputing the parsed constr expression
         if constr is None:
-            constr = self._con_to_mip_con(con)
+            constr = self._expr_to_mip_expr(con)
         if is_lb and con.lb is not None:
            self.problem.add_constr(-constr <= -con.lb, con.constraint_name(True))
         elif not is_lb and con.ub is not None:
@@ -404,7 +409,7 @@ class Model(interface.Model):
     def _add_constraints(self, constraints, sloppy=False):
         super(Model, self)._add_constraints(constraints, sloppy=sloppy)
         for con in constraints:
-            constr = self._con_to_mip_con(con)
+            constr = self._expr_to_mip_expr(con)
             # Attempt to add lb and ub constraints
             self._add_mip_constraint(con, True, constr)
             self._add_mip_constraint(con, False, constr)
@@ -421,12 +426,12 @@ class Model(interface.Model):
         # TODO: could set self.problem.threads = -1 to use all available cores
         # TODO: could pass in max_nodes, max_solutions, relax by setting them
         #       in configuration
-        print('mip.Var')
-        for v in self.problem.vars:
-            print(f'{v.lb} <= {v} <= {v.ub}')
-        print('mip.Constr')
-        for c in self.problem.constrs:
-            print(c)
+        # print('mip.Var')
+        # for v in self.problem.vars:
+        #     print(f'{v.lb} <= {v} <= {v.ub}')
+        # print('mip.Constr')
+        # for c in self.problem.constrs:
+        #     print(c)
 
 
         status = self.problem.optimize(max_seconds=self.configuration.timeout)
@@ -443,13 +448,9 @@ class Model(interface.Model):
         super(Model, Model).objective.fset(self, value)
         self.update()
 
-        offset, coeffs, _ = parse_optimization_expression(value)
-        self.problem.objective = offset + xsum(to_float(coef) * self.problem.var_by_name(var.name)
-                                               for var, coef in coeffs.items())
-
+        self.problem.objective = self._expr_to_mip_expr(value)
         self.problem.sense = _MIP_DIRECTION[value.direction]
         value.problem = self
-
 
 if __name__ == '__main__':
     def test1():

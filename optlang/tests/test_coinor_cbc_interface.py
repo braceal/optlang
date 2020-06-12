@@ -205,9 +205,24 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         self.assertIn(constr4.name, self.model.constraints)
         self.assertIn(constr5.name, self.model.constraints)
 
-    @unittest.skip("")
     def test_change_of_constraint_is_reflected_in_low_level_solver(self):
-        pass
+        x = self.interface.Variable('x', lb=0, ub=1, type='continuous')
+        y = self.interface.Variable('y', lb=-181133.3, ub=12000., type='continuous')
+        z = self.interface.Variable('z', lb=0., ub=10., type='continuous')
+        constr1 = self.interface.Constraint(0.3 * x + 0.4 * y + 66. * z, lb=-100, ub=0., name='test')
+        self.model.add(constr1)
+        self.model.update()
+        self.assertEqual(self.model.problem.constr_by_name('test_lower').rhs, 100)
+        self.assertEqual(self.model.problem.constr_by_name('test_upper').rhs, 0)
+        constr1.lb = -9
+        constr1.ub = 10
+        self.assertEqual(self.model.problem.constr_by_name('test_lower').rhs, 9)
+        self.assertEqual(self.model.problem.constr_by_name('test_upper').rhs, 10)
+        self.model.optimize()
+        constr1.lb = -90
+        constr1.ub = 100
+        self.assertEqual(self.model.problem.constr_by_name('test_lower').rhs, 90)
+        self.assertEqual(self.model.problem.constr_by_name('test_upper').rhs, 100)
 
     @unittest.skip("")
     def test_constraint_set_problem_to_None_caches_the_latest_expression_from_solver_instance(self):

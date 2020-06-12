@@ -164,6 +164,16 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
 
         self.assertEqual(constrs, [constr.name for constr in self.model.problem.constrs])
 
+    def test_add_non_cplex_conform_variable(self):
+        var = self.interface.Variable('12x!!@#5_3', lb=-666, ub=666)
+        self.model.add(var)
+        self.assertTrue(var in self.model.variables.values())
+        self.assertEqual(self.model.variables['12x!!@#5_3'].lb, -666)
+        self.assertEqual(self.model.variables['12x!!@#5_3'].ub, 666)
+        repickled = pickle.loads(pickle.dumps(self.model))
+        var_from_pickle = repickled.variables['12x!!@#5_3']
+        self.assertTrue(var_from_pickle.name in [var.name for var in self.model.problem.vars])
+
     @unittest.skip("COIN-OR Cbc doesn't support constraint name change")
     def test_change_constraint_name(self):
         pass
@@ -175,18 +185,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     @unittest.skip("NA")
     def test_optimize_milp(self):
         pass
-
-    @unittest.skip("Not implemented yet")
-    def test_add_non_cplex_conform_variable(self):
-        var = self.interface.Variable('12x!!@#5_3', lb=-666, ub=666)
-        self.assertEqual(var.index, None)
-        self.model.add(var)
-        self.assertTrue(var in self.model.variables.values())
-        self.assertEqual(self.model.variables['12x!!@#5_3'].lb, -666)
-        self.assertEqual(self.model.variables['12x!!@#5_3'].ub, 666)
-        # repickled = pickle.loads(pickle.dumps(self.model))
-        # var_from_pickle = repickled.variables['12x!!@#5_3']
-        # self.assertEqual(var_from_pickle.name, glp_get_col_name(repickled.problem, var_from_pickle.index))
 
     def test_add_constraints(self):
         x = self.interface.Variable('x', lb=0, ub=1, type='continuous')

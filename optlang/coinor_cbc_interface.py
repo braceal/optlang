@@ -143,8 +143,7 @@ class Variable(interface.Variable):
         old_name = getattr(self, 'name', None)
         super(Variable, Variable).name.fset(self, value)
         if getattr(self, 'problem', None) is not None:
-            # TODO: currently not supported
-            self.problem._update_var_name(old_name, self)
+            raise Exception('COIN-OR Cbc doesn\'t support variable name change')
 
 
 @six.add_metaclass(inheritdocstring)
@@ -332,25 +331,6 @@ class Model(interface.Model):
     def _var_dual(self, name):
         """Used by Variable class."""
         return None
-
-    # TODO: implement _update_var_name
-    def _update_var_name(self, old_name, var):
-        """
-        Steps
-
-        1. find var in objective. copy the coefficient and then remove the old key
-           and add a new key with the new name
-
-        2. call _remove_variables, and then re add the variable with the new name
-        """
-        #self.update() # TODO: may not be necessary
-
-        # TODO: does removing vars, remove them from the objective or constraints?
-        #       if so we need to get the coefficient first
-        #self._remove_variables([var])
-
-        pass
-
 
     def _update_var_lb(self, name, lb):
         """Used by Variable class."""

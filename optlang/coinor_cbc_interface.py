@@ -165,9 +165,9 @@ class Constraint(interface.Constraint):
     def primal(self):
         if getattr(self, 'problem', None) is not None and self.problem.status == interface.OPTIMAL:
             if self.lb is not None:
-                return self.lb + self.problem.problem.constr_by_name(self.constraint_name(True)).slack
+                return self.problem._constr_primal(self, True)
             if self.ub is not None:
-                return self.ub - self.problem.problem.constr_by_name(self.constraint_name(False)).slack
+                return self.problem._constr_primal(self, False)
         return None
 
     @property
@@ -175,9 +175,10 @@ class Constraint(interface.Constraint):
         if getattr(self, 'problem', None) is None:
             return None
         if self.lb is not None:
-                return self.problem.problem.constr_by_name(self.constraint_name(True)).pi
+            return self.problem._constr_dual(self, True)
         if self.ub is not None:
-            return self.problem.problem.constr_by_name(self.constraint_name(False)).pi
+            return self.problem._constr_dual(self, False)
+        return None
 
     def _update_bound(self, new, old, is_lb):
         """Updates associated model with new constraint bounds."""
@@ -357,6 +358,13 @@ class Model(interface.Model):
         super(Model, self)._remove_variables(variables)
         for var in variables:
             self.problem.remove(self.problem.var_by_name(var.name))
+
+    def _constr_primal(self, con, is_lb):
+        slack = self.problem.constr_by_name(con.constraint_name(is_lb)).slack
+        return con.lb + slack if is_lb else con.ub - slack
+
+    def _constr_dual(self, con, is_lb):
+        return self.problem.constr_by_name(con.constraint_name(is_lb)).pi
 
     def _update_constraint_bound(self, con, is_lb):
         """Used by Constraint class."""

@@ -142,7 +142,6 @@ class Variable(interface.Variable):
 
     @interface.Variable.name.setter
     def name(self, value):
-        old_name = getattr(self, 'name', None)
         super(Variable, Variable).name.fset(self, value)
         if getattr(self, 'problem', None) is not None:
             raise Exception('COIN-OR Cbc doesn\'t support variable name change')
@@ -204,6 +203,12 @@ class Constraint(interface.Constraint):
         self._check_valid_upper_bound(value)
         self._ub, old_ub = value, getattr(self, '_ub', None)
         self._update_bound(value, old_ub, False)
+
+    @interface.Constraint.name.setter
+    def name(self, value):
+        super(Constraint, Constraint).name.fset(self, value)
+        if getattr(self, 'problem', None) is not None:
+            raise Exception('COIN-OR Cbc doesn\'t support constraint name change')
 
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:

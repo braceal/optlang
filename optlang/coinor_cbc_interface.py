@@ -163,7 +163,8 @@ class Constraint(interface.Constraint):
 
     @property
     def primal(self):
-        if getattr(self, 'problem', None) is not None and self.problem.status == interface.OPTIMAL:
+        if getattr(self, 'problem', None) is not None \
+           and self.problem.status == interface.OPTIMAL:
             if self.lb is not None:
                 return self.problem._constr_primal(self, True)
             if self.ub is not None:

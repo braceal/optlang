@@ -136,6 +136,8 @@ class Variable(interface.Variable):
     def dual(self):
         if self.problem is None:
             return None
+        if self.type != 'continuous':
+            raise Exception('Dual is only available for continuous variables')
         return self.problem._var_dual(self.name)
 
     @interface.Variable.name.setter
@@ -168,7 +170,6 @@ class Constraint(interface.Constraint):
                 return self.ub - self.problem.problem.constr_by_name(self.constraint_name(False)).slack
         return None
 
-    # TODO: test this
     @property
     def dual(self):
         if getattr(self, 'problem', None) is None:
@@ -327,10 +328,9 @@ class Model(interface.Model):
         """Used by Variable class."""
         return self.problem.var_by_name(name).x
 
-    # TODO: implement _var_dual
     def _var_dual(self, name):
         """Used by Variable class."""
-        return None
+        return self.problem.var_by_name(name).rc
 
     def _update_var_lb(self, name, lb):
         """Used by Variable class."""

@@ -320,6 +320,7 @@ class Model(interface.Model):
     def _configure_model(self):
         self.problem.verbose = 1 if self.configuration.verbosity > 1 else 0
         self.problem.max_mip_gap_abs = self.configuration.tolerance
+        self.problem.max_seconds = self.configuration.timeout
 
     def _initialize_problem(self):
         self.problem = mipModel()
@@ -421,8 +422,7 @@ class Model(interface.Model):
 
         # TODO: presolve. can improves numerical stability.
 
-
-        status = self.problem.optimize(max_seconds=self.configuration.timeout)
+        status = self.problem.optimize()
 
         # TODO: make more robust. See glpk_interface.py (only do relax version if user specifies a flag)
         #       handle INT_INFEASIBLE case. mip.Model has a relax method that

@@ -314,11 +314,9 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         self.assertEqual(self.model.objective.direction, "max")
         self.assertEqual(mip_expr, self.model.problem.objective.expr)
 
-    @unittest.skip("NA")
+    @unittest.skip("CBC-MIP timeout is flaky around 0")
     def test_timeout(self):
-        self.model.configuration.timeout = 0
-        status = self.model.optimize()
-        self.assertEqual(status, 'time_limit')
+        pass
 
     @unittest.skip("Not implemented yet")
     def test_set_linear_coefficients_objective(self):

@@ -25,7 +25,6 @@ from optlang.tests import abstract_test_cases
 
 TESTMODELPATH = os.path.join(os.path.dirname(__file__), 'data/coli_core.json')
 
-
 class VariableTestCase(abstract_test_cases.AbstractVariableTestCase):
     interface = coinor_cbc_interface
 

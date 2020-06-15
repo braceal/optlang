@@ -270,6 +270,19 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
                 1.0 * self.model.variables.BIOMASS_Ecoli_core_w_GAM_reverse_712e5)).expand() - 0, 0
         )
 
+    def test_change_objective(self):
+        v1, v2 = self.model.variables.values()[0:2]
+
+        self.model.objective = self.interface.Objective(1. * v1 + 1. * v2)
+        self.assertIn(v1.name, str(self.model.objective))
+        self.assertIn(v2.name, str(self.model.objective))
+        self.assertEqual(self.model.objective._expression, 1.*v1 + 1.*v2)
+
+        self.model.objective = self.interface.Objective(v1 + v2)
+        self.assertIn(v1.name, str(self.model.objective))
+        self.assertIn(v2.name, str(self.model.objective))
+        self.assertEqual(self.model.objective._expression, 1.*v1 + 1.*v2)
+
     @unittest.skip("Not implemented yet")
     def test_iadd_objective(self):
         pass
@@ -305,12 +318,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     @unittest.skip("Not implemented yet")
     def test_set_linear_coefficients_constraint(self):
         pass
-
-    def test_change_objective(self):
-        v1, v2 = self.model.variables.values()[0:2]
-        self.model.objective = self.interface.Objective(1. * v1 + 1. * v2)
-        self.assertIn(v1.name, str(self.model.objective))
-        self.assertIn(v2.name, str(self.model.objective))
 
     def test_scipy_coefficient_dict(self):
         x = self.interface.Variable("x")

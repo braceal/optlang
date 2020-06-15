@@ -318,10 +318,10 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     def test_timeout(self):
         pass
 
-    @unittest.skip("Not implemented yet")
     def test_set_linear_coefficients_objective(self):
-        self.model.objective.set_linear_coefficients({self.model.variables.R_TPI: 666.})
-        # self.assertEqual(glp_get_obj_coef(self.model.problem, self.model.variables.R_TPI.index), 666.)
+        self.model.objective.set_linear_coefficients({self.model.variables.BIOMASS_Ecoli_core_w_GAM: 666.})
+        var = self.model.problem.var_by_name(self.model.variables.BIOMASS_Ecoli_core_w_GAM.name)
+        self.assertEqual(self.model.problem.objective.expr[var], 666.)
 
     @unittest.skip("")
     def test_instantiating_model_with_different_solver_problem_raises(self):

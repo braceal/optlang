@@ -239,9 +239,21 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
 
         self.assertEqual(self.model.problem.objective.expr, expected)
 
-    @unittest.skip("")
     def test_change_variable_bounds(self):
-        pass
+        import random
+        inner_prob = self.model.problem
+        inner_problem_bounds = [(var.lb, var.ub) for var in inner_prob.vars]
+        bounds = [(var.lb, var.ub) for var in self.model.variables.values()]
+        self.assertEqual(bounds, inner_problem_bounds)
+        for var in self.model.variables.values():
+            var.ub = random.uniform(var.lb, 1000)
+            var.lb = random.uniform(-1000, var.ub)
+        self.model.update()
+        inner_problem_bounds_new = [(var.lb, var.ub) for var in inner_prob.vars]
+        bounds_new = [(var.lb, var.ub) for var in self.model.variables.values()]
+        self.assertNotEqual(bounds, bounds_new)
+        self.assertNotEqual(inner_problem_bounds, inner_problem_bounds_new)
+        self.assertEqual(bounds_new, inner_problem_bounds_new)
 
     @unittest.skip("")
     def test_change_constraint_bounds(self):

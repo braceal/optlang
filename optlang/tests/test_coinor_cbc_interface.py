@@ -307,14 +307,12 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         obj_coeff = sorted(self.model.problem.objective.expr.values())
         self.assertEqual(obj_coeff, [-12.0, -6.0, 6.0, 9.0])
 
-    @unittest.skip("Not implemented yet")
     def test_set_copied_objective(self):
+        mip_expr= self.model.problem.objective.expr
         obj_copy = copy.copy(self.model.objective)
         self.model.objective = obj_copy
         self.assertEqual(self.model.objective.direction, "max")
-        self.assertEqual(
-            (self.model.objective.expression - (1.0 * self.model.variables.R_Biomass_Ecoli_core_w_GAM)).expand() - 0, 0
-        )
+        self.assertEqual(mip_expr, self.model.problem.objective.expr)
 
     @unittest.skip("NA")
     def test_timeout(self):

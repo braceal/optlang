@@ -323,10 +323,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         var = self.model.problem.var_by_name(self.model.variables.BIOMASS_Ecoli_core_w_GAM.name)
         self.assertEqual(self.model.problem.objective.expr[var], 666.)
 
-    @unittest.skip("")
-    def test_instantiating_model_with_different_solver_problem_raises(self):
-        self.assertRaises(TypeError, self.interface.Model, problem='Chicken soup')
-
     @unittest.skip("Not implemented yet")
     def test_set_linear_coefficients_constraint(self):
         pass

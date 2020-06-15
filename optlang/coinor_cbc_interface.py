@@ -15,14 +15,15 @@
 
 
 """
-Interface for the GNU Linear Programming Kit (GLPK)
+Interface for the Python MIP (Mixed-Integer Linear Programming) Tools.
 
-Wraps the GLPK solver by subclassing and extending :class:`Model`,
+Wraps the MIP solver by subclassing and extending :class:`Model`,
 :class:`Variable`, and :class:`Constraint` from :mod:`interface`.
 
-GLPK is an open source LP solver, with MILP capabilities.
-To use GLPK you need to install the 'swiglpk' python package (with pip or from http://github.com/biosustain/swiglpk)
-and make sure that 'import swiglpk' runs without error.
+MIP is an open source MILP Python wrapper around the open-source COIN-OR
+Branch-&-Cut CBC solver. To use MIP you need to install the 'mip'
+python package (with pip or from https://www.python-mip.com/)
+and make sure that 'import mip' runs without error.
 """
 import logging
 
@@ -40,7 +41,6 @@ from mip import (BINARY, INTEGER, CONTINUOUS, OptimizationStatus,
                  MINIMIZE, MAXIMIZE, xsum)
 
 log = logging.getLogger(__name__)
-
 
 _MIP_STATUS_TO_STATUS = {
     OptimizationStatus.CUTOFF: interface.CUTOFF,
@@ -180,7 +180,7 @@ class Constraint(interface.Constraint):
         return None
 
     def _update_bound(self, new, old, is_lb):
-        """Updates associated model with new constraint bounds."""
+        """Updates associated mip model with new constraint bounds."""
         if getattr(self, 'problem', None) is None:
             return
 
@@ -296,7 +296,7 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     def presolve(self, value):
         # TODO: implement if possible
         if value:
-            raise ValueError('The COIN-OR Cbc solver has no presolve capabilities')
+            raise ValueError('Not implemented')
 
     @property
     def timeout(self):
@@ -387,6 +387,8 @@ class Model(interface.Model):
         # Optimization for precomputing the parsed constr expression
         if constr is None:
             constr = self._expr_to_mip_expr(con)
+
+        # TODO: check if mip supports indicator_variable
         if is_lb and con.lb is not None:
            self.problem.add_constr(-constr <= -con.lb, con.constraint_name(True))
         elif not is_lb and con.ub is not None:
@@ -395,7 +397,6 @@ class Model(interface.Model):
     def _add_constraints(self, constraints, sloppy=False):
         super(Model, self)._add_constraints(constraints, sloppy=sloppy)
         for con in constraints:
-            # TODO: check if it supports indicator_variable
             constr = self._expr_to_mip_expr(con)
             # Attempt to add lb and ub constraints
             self._add_mip_constraint(con, True, constr)
@@ -413,18 +414,13 @@ class Model(interface.Model):
         # TODO: could set self.problem.threads = -1 to use all available cores
         # TODO: could pass in max_nodes, max_solutions, relax by setting them
         #       in configuration
-        # print('mip.Var')
-        # for v in self.problem.vars:
-        #     print(f'{v.lb} <= {v} <= {v.ub}')
-        # print('mip.Constr')
-        # for c in self.problem.constrs:
-        #     print(c)
 
-        # TODO: presolve. can improves numerical stability.
+        # TODO: presolve. can improve numerical stability.
 
         status = self.problem.optimize()
 
-        # TODO: make more robust. See glpk_interface.py (only do relax version if user specifies a flag)
+        # TODO: make more robust. See glpk_interface.py
+        #       (only do relax version if user specifies a flag)
         #       handle INT_INFEASIBLE case. mip.Model has a relax method that
         #       changes all integer and binary variable types to continuous.
         #       if we call this, make sure to update the associated Variable objects.
@@ -445,314 +441,3 @@ class Model(interface.Model):
         result = cls.__new__(cls)
         result.__dict__.update(self.__dict__)
         return result
-
-if __name__ == '__main__':
-    def test1():
-
-        x1 = Variable('x1', lb=0, ub=5)
-        x2 = Variable('x2', lb=0, ub=5)
-        x3 = Variable('x3', lb=0, ub=5)
-
-        # Variable tests
-        assert x1.name == 'x1'
-        assert x1.lb == 0
-        assert x1.ub == 5
-        assert x1.type == 'continuous'
-
-
-        assert x1.problem == None
-
-        x1.name = 'x1_name_change'
-
-        assert x1.name == 'x1_name_change'
-        x1.name = 'x1'
-        assert x1.primal == None
-        x1.lb = 1
-        assert x1.lb == 1
-        x1.lb = 0
-
-        c1 = Constraint(x1 + x2 + x3, lb=-10, ub=10, name='c1')
-        # c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
-        # c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
-        obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
-        # TODO: test obj with just a constant
-
-        assert obj.value == None
-        assert obj.direction == 'max'
-
-        model = Model(name='Simple model')
-        model.objective = obj
-
-        assert obj.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 6, x3: 4}
-
-        print(obj)
-
-        obj.set_linear_coefficients({x1: 11., x2: 6., x3: 4., 1:10})
-
-        print(obj)
-
-        x1.lb = 1
-        x2.ub = 6
-        x1.ub = 4.9
-
-        x3.set_bounds(2, 6)
-
-        # integer types rounds constraints x1.ub to nearest integer (5)
-        x1.type = 'integer'
-        x3.type = 'binary'
-
-        assert x3.lb == 0 and x3.ub == 1
-        assert x1.lb == 1 and x1.ub == 5
-
-        model.add([c1])
-        # model.add([c1, c2, c3])
-        status = model.optimize()
-        print('status:', model.status)
-        print('objective value:', model.objective.value)
-        assert model.objective.value == 95.0
-
-        for var_name, var in model.variables.items():
-            print(var_name, '=', var.primal)
-
-        print(model)
-
-    def test_changing_constraints():
-
-        x1 = Variable('x1', lb=0, ub=5)
-        x2 = Variable('x2', lb=0, ub=5)
-        x3 = Variable('x3', lb=0, ub=5)
-
-        c1 = Constraint(x1 + x2 + x3, lb=-10, ub=10, name='c1')
-        c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
-        #c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300, name='c3')
-        obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
-        # TODO: test obj with just a constant
-
-        model = Model(name='Simple model')
-        model.objective = obj
-
-        model.add([c1])
-
-
-        c1.ub = 11
-
-
-        status = model.optimize()
-
-        print('status:', model.status)
-        print('objective value:', model.objective.value)
-
-        for var_name, var in model.variables.items():
-            print(var_name, '=', var.primal)
-
-        print(model)
-
-        assert model.objective.value == 85.0
-
-
-        c1.ub = 10
-        c1.lb = 5
-
-        status = model.optimize()
-
-        print('status:', model.status)
-        print('objective value:', model.objective.value)
-
-        for var_name, var in model.variables.items():
-            print(var_name, '=', var.primal)
-
-        print(model)
-
-        assert model.objective.value == 81.0
-
-    def test_constraint_get_linear_coefficients():
-
-        x1 = Variable('x1', lb=0, ub=5)
-        x2 = Variable('x2', lb=0, ub=5)
-        x3 = Variable('x3', lb=0, ub=5)
-
-        c1 = Constraint(x1 + x2 + x3 + 1, lb=-10, ub=10, name='c1')
-        c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600, name='c2')
-        obj = Objective(10 * x1 + 6 * x2 + 4 * x3 + 1, direction='max')
-        # TODO: test obj with just a constant
-
-        model = Model(name='Simple model')
-        model.objective = obj
-
-        model.add([c1, c2])
-
-        model.optimize()
-        print('status:', model.status)
-        print('objective value:', model.objective.value)
-        print(model)
-        for var_name, var in model.variables.iteritems():
-            print(var_name, "=", var.primal)
-
-        assert c1.get_linear_coefficients([x1, x2, x3]) == {x1: 1, x2: 1, x3: 1}
-        assert c2.get_linear_coefficients([x1, x2, x3]) == {x1: 10, x2: 4, x3: 5}
-
-        c1.set_linear_coefficients({x1:2, x2:2})
-        assert c1.get_linear_coefficients([x1, x2, x3]) == {x1: 2, x2: 2, x3: 1}
-
-        model.optimize()
-        print('status:', model.status)
-        print('objective value:', model.objective.value)
-        print(model)
-        for var_name, var in model.variables.iteritems():
-            print(var_name, "=", var.primal)
-
-    def test2():
-
-        # All the (symbolic) variables are declared, with a name and optionally a lower and/or upper bound.
-        x1 = Variable('x1', lb=0)
-        x2 = Variable('x2', lb=0)
-        x3 = Variable('x3', lb=0)
-
-        # A constraint is constructed from an expression of variables and a lower and/or upper bound (lb and ub).
-        c1 = Constraint(x1 + x2 + x3, ub=100)
-        c2 = Constraint(10 * x1 + 4 * x2 + 5 * x3, ub=600)
-        c3 = Constraint(2 * x1 + 2 * x2 + 6 * x3, ub=300)
-
-        # An objective can be formulated
-        obj = Objective(10 * x1 + 6 * x2 + 4 * x3, direction='max')
-
-        # Variables, constraints and objective are combined in a Model object, which can subsequently be optimized.
-        model = Model(name='Simple model')
-        model.objective = obj
-        model.add([c1, c2, c3])
-
-        status = model.optimize()
-
-        print("status:", model.status)
-        print("objective value:", model.objective.value)
-        print("----------")
-        for var_name, var in model.variables.iteritems():
-            print(var_name, "=", var.primal)
-
-
-    def test3():
-
-        p = [10, 13, 18, 31, 7, 15]
-        w = [11, 15, 20, 35, 10, 33]
-        c, I = 47, range(len(w))
-
-        x = [Variable(type='binary', name=f'x{i}') for i in I]
-
-        assert x[0].lb == 0 and x[0].ub == 1
-
-        obj = Objective(sum(p[i] * x[i] for i in I), direction='max')
-
-        c1 = Constraint(sum(w[i] * x[i] for i in I), ub=c)
-
-        model = Model(name='knapsack')
-        model.objective = obj
-        model.add([c1])
-
-        status = model.optimize()
-
-        assert model.objective.value == 41.0
-
-        print("status:", model.status)
-        print("objective value:", model.objective.value)
-        print("----------")
-        for var_name, var in model.variables.iteritems():
-            print(var_name, "=", var.primal)
-
-        selected = [i for i in I if x[i].primal >= 0.99]
-        print("selected items: {}".format(selected))
-
-        assert selected == [0, 3]
-
-    def test4():
-        from itertools import product
-
-        # names of places to visit
-        places = ['Antwerp', 'Bruges', 'C-Mine', 'Dinant', 'Ghent',
-                  'Grand-Place de Bruxelles', 'Hasselt', 'Leuven',
-                  'Mechelen', 'Mons', 'Montagne de Bueren', 'Namur',
-                  'Remouchamps', 'Waterloo']
-
-        # distances in an upper triangular matrix
-        dists = [[83, 81, 113, 52, 42, 73, 44, 23, 91, 105, 90, 124, 57],
-                 [161, 160, 39, 89, 151, 110, 90, 99, 177, 143, 193, 100],
-                 [90, 125, 82, 13, 57, 71, 123, 38, 72, 59, 82],
-                 [123, 77, 81, 71, 91, 72, 64, 24, 62, 63],
-                 [51, 114, 72, 54, 69, 139, 105, 155, 62],
-                 [70, 25, 22, 52, 90, 56, 105, 16],
-                 [45, 61, 111, 36, 61, 57, 70],
-                 [23, 71, 67, 48, 85, 29],
-                 [74, 89, 69, 107, 36],
-                 [117, 65, 125, 43],
-                 [54, 22, 84],
-                 [60, 44],
-                 [97],
-                 []]
-
-        # number of nodes and list of vertices
-        n, V = len(dists), set(range(len(dists)))
-
-        # distances matrix
-        c = [[0 if i == j
-              else dists[i][j-i-1] if j > i
-              else dists[j][i-j-1]
-              for j in V] for i in V]
-
-        model = Model()
-
-        # binary variables indicating if arc (i,j) is used on the route or not
-        x = [[Variable(type='binary', name=f'x_i={i}_j={j}_arc') for j in V] for i in V]
-
-        # continuous variable to prevent subtours: each city will have a
-        # different sequential id in the planned route except the first one
-        y = [Variable(name=f'x{i}') for i in V]
-
-        # objective function: minimize the distance
-        obj = Objective(sum(c[i][j]*x[i][j] for i in V for j in V), direction='min')
-
-        # constraint : leave each city only once
-        cons = []
-        for i in V:
-            cons.append(Constraint(sum(x[i][j] for j in V - {i}), lb=1, ub=1))
-
-        # constraint : enter each city only once
-        for i in V:
-            cons.append(Constraint(sum(x[j][i] for j in V - {i}), lb=1, ub=1))
-
-        # subtour elimination
-        for (i, j) in product(V - {0}, V - {0}):
-            if i != j:
-                cons.append(Constraint(y[i] - (n+1)*x[i][j] - y[j], lb=-1*n))
-
-        model = Model(name='travelling_salesman')
-        model.objective = obj
-        model.add(cons)
-
-        # optimizing
-        model.optimize()
-
-        print("status:", model.status)
-        print("objective value:", model.objective.value)
-        assert model.objective.value == 547.0
-
-    def test_constant_objective():
-        x1 = Variable('x1', lb=0, ub=5)
-        c1 = Constraint(x1, lb=-10, ub=10, name='c1')
-        obj = Objective(1, direction='max')
-        model = Model('test')
-        model.objective = obj
-        model.add(c1)
-
-        print(model)
-
-        model.optimize()
-        print(model.objective.value)
-        assert model.objective.value == 1.0
-
-
-    test1()
-    test2()
-    test3()
-    test4()
-    test_changing_constraints()
-    test_constraint_get_linear_coefficients()
-    test_constant_objective()

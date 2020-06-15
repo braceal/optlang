@@ -376,3 +376,114 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     @unittest.skip('TODO: fix. Not working correctly')
     def test_integer_batch_duals(self):
         pass
+
+
+class MIPExamples(unittest.TestCase):
+    interface = coinor_cbc_interface
+
+    def test_constant_objective(self):
+        x1 = self.interface.Variable('x1', lb=0, ub=5)
+        c1 = self.interface.Constraint(x1, lb=-10, ub=10, name='c1')
+        obj = self.interface.Objective(1)
+        model = self.interface.Model()
+        model.objective = obj
+        model.add(c1)
+        model.optimize()
+
+        self.assertEqual(model.status, 'optimal')
+        self.assertEqual(model.objective.value, 1.0)
+
+    def test_knapsack(self):
+
+        p = [10, 13, 18, 31, 7, 15]
+        w = [11, 15, 20, 35, 10, 33]
+        c, I = 47, range(len(w))
+
+        x = [self.interface.Variable(type='binary', name=f'x{i}') for i in I]
+
+        assert x[0].lb == 0 and x[0].ub == 1
+
+        obj = self.interface.Objective(sum(p[i] * x[i] for i in I), direction='max')
+
+        c1 = self.interface.Constraint(sum(w[i] * x[i] for i in I), ub=c)
+
+        model = self.interface.Model(name='knapsack')
+        model.objective = obj
+        model.add([c1])
+
+        status = model.optimize()
+
+        self.assertEqual(model.status, 'optimal')
+        self.assertEqual(model.objective.value, 41.0)
+
+        primal_values = [val for val in model.primal_values.values()]
+        self.assertEqual(primal_values, [1, 0, 0, 1, 0, 0])
+
+        selected = [i for i in I if x[i].primal >= 0.99]
+        self.assertEqual(selected, [0, 3])
+
+    def test_travelling_salesman(self):
+        from itertools import product
+
+        # names of places to visit
+        places = ['Antwerp', 'Bruges', 'C-Mine', 'Dinant', 'Ghent',
+                  'Grand-Place de Bruxelles', 'Hasselt', 'Leuven',
+                  'Mechelen', 'Mons', 'Montagne de Bueren', 'Namur',
+                  'Remouchamps', 'Waterloo']
+
+        # distances in an upper triangular matrix
+        dists = [[83, 81, 113, 52, 42, 73, 44, 23, 91, 105, 90, 124, 57],
+                 [161, 160, 39, 89, 151, 110, 90, 99, 177, 143, 193, 100],
+                 [90, 125, 82, 13, 57, 71, 123, 38, 72, 59, 82],
+                 [123, 77, 81, 71, 91, 72, 64, 24, 62, 63],
+                 [51, 114, 72, 54, 69, 139, 105, 155, 62],
+                 [70, 25, 22, 52, 90, 56, 105, 16],
+                 [45, 61, 111, 36, 61, 57, 70],
+                 [23, 71, 67, 48, 85, 29],
+                 [74, 89, 69, 107, 36],
+                 [117, 65, 125, 43],
+                 [54, 22, 84],
+                 [60, 44],
+                 [97],
+                 []]
+
+        # number of nodes and list of vertices
+        n, V = len(dists), set(range(len(dists)))
+
+        # distances matrix
+        c = [[0 if i == j
+              else dists[i][j-i-1] if j > i
+              else dists[j][i-j-1]
+              for j in V] for i in V]
+
+        # binary variables indicating if arc (i,j) is used on the route or not
+        x = [[self.interface.Variable(type='binary', name=f'x_i={i}_j={j}_arc') for j in V] for i in V]
+
+        # continuous variable to prevent subtours: each city will have a
+        # different sequential id in the planned route except the first one
+        y = [self.interface.Variable(name=f'x{i}') for i in V]
+
+        # objective function: minimize the distance
+        obj = self.interface.Objective(sum(c[i][j]*x[i][j] for i in V for j in V), direction='min')
+
+        # constraint : leave each city only once
+        cons = []
+        for i in V:
+            cons.append(self.interface.Constraint(sum(x[i][j] for j in V - {i}), lb=1, ub=1))
+
+        # constraint : enter each city only once
+        for i in V:
+            cons.append(self.interface.Constraint(sum(x[j][i] for j in V - {i}), lb=1, ub=1))
+
+        # subtour elimination
+        for (i, j) in product(V - {0}, V - {0}):
+            if i != j:
+                cons.append(self.interface.Constraint(y[i] - (n+1)*x[i][j] - y[j], lb=-1*n))
+
+        model = self.interface.Model(name='travelling_salesman')
+        model.objective = obj
+        model.add(cons)
+        model.optimize()
+
+        self.assertEqual(model.status, 'optimal')
+        self.assertEqual(model.objective.value, 547.0)

@@ -182,10 +182,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     def test_clone_model_with_lp(self):
         pass
 
-    @unittest.skip("NA")
-    def test_optimize_milp(self):
-        pass
-
     def test_change_of_constraint_is_reflected_in_low_level_solver(self):
         x = self.interface.Variable('x', lb=0, ub=1, type='continuous')
         y = self.interface.Variable('y', lb=-181133.3, ub=12000., type='continuous')

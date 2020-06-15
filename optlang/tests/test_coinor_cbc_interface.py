@@ -283,9 +283,13 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         self.assertIn(v2.name, str(self.model.objective))
         self.assertEqual(self.model.objective._expression, 1.*v1 + 1.*v2)
 
-    @unittest.skip("Not implemented yet")
     def test_iadd_objective(self):
-        pass
+        v2, v3 = self.model.variables.values()[1:3]
+        obj_coeff = sorted(self.model.problem.objective.expr.values())
+        self.assertEqual(obj_coeff, [-1.0, 1.0])
+        self.model.objective += 2. * v2 - 3. * v3
+        obj_coeff = sorted(self.model.problem.objective.expr.values())
+        self.assertEqual(obj_coeff, [-3.0, -1.0, 1.0, 2.0])
 
     @unittest.skip("Not implemented yet")
     def test_imul_objective(self):

@@ -323,9 +323,13 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         var = self.model.problem.var_by_name(self.model.variables.BIOMASS_Ecoli_core_w_GAM.name)
         self.assertEqual(self.model.problem.objective.expr[var], 666.)
 
-    @unittest.skip("Not implemented yet")
     def test_set_linear_coefficients_constraint(self):
-        pass
+        constraint = self.model.constraints[0]
+        coeff_dict = constraint.expression.as_coefficients_dict()
+        self.assertEqual(coeff_dict[self.model.variables.GAPD_reverse_459c1], -1.0)
+        constraint.set_linear_coefficients({self.model.variables.GAPD_reverse_459c1: 666.})
+        coeff_dict = constraint.expression.as_coefficients_dict()
+        self.assertEqual(coeff_dict[self.model.variables.GAPD_reverse_459c1], 666.)
 
     def test_scipy_coefficient_dict(self):
         x = self.interface.Variable("x")

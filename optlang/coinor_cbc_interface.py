@@ -34,7 +34,7 @@ from optlang.expression_parsing import parse_optimization_expression
 from optlang import interface
 from optlang import symbolics
 
-from math import isclose
+from math import isclose, ceil, floor
 from mip import Model as mipModel
 from mip import (BINARY, INTEGER, CONTINUOUS, OptimizationStatus,
                  MINIMIZE, MAXIMIZE, xsum)
@@ -120,9 +120,9 @@ class Variable(interface.Variable):
 
         if value == 'integer':
             if self.lb is not None:
-                self.lb = round(self.lb)
+                self.lb = ceil(self.lb)
             if self.ub is not None:
-                self.ub = round(self.ub)
+                self.ub = floor(self.ub)
         elif value == 'binary':
             self.lb, self.ub = 0, 1
 
@@ -149,8 +149,7 @@ class Variable(interface.Variable):
 
 @six.add_metaclass(inheritdocstring)
 class Constraint(interface.Constraint):
-    # TODO: do binary constraints count as this?
-    _INDICATOR_CONSTRAINT_SUPPORT = True
+    _INDICATOR_CONSTRAINT_SUPPORT = False
 
     def __init__(self, expression, sloppy=False, *args, **kwargs):
         super(Constraint, self).__init__(expression, sloppy=sloppy, *args, **kwargs)
@@ -323,7 +322,6 @@ class Model(interface.Model):
         self.problem.max_mip_gap_abs = self.configuration.tolerance
 
     def _initialize_problem(self):
-        # problem has sense attribute
         self.problem = mipModel()
 
     def _initialize_model_from_problem(self, problem):
@@ -332,23 +330,18 @@ class Model(interface.Model):
         self.problem = problem
 
     def _var_primal(self, name):
-        """Used by Variable class."""
         return self.problem.var_by_name(name).x
 
     def _var_dual(self, name):
-        """Used by Variable class."""
         return self.problem.var_by_name(name).rc
 
     def _update_var_lb(self, name, lb):
-        """Used by Variable class."""
         self.problem.var_by_name(name).lb = to_float(lb, True)
 
     def _update_var_ub(self, name, ub):
-        """Used by Variable class."""
         self.problem.var_by_name(name).ub = to_float(ub, False)
 
     def _update_var_type(self, name, var_type):
-        """Used by Variable class."""
         self.problem.var_by_name(name).var_type = var_type
 
     def _add_variables(self, variables):
@@ -373,7 +366,6 @@ class Model(interface.Model):
         return self.problem.constr_by_name(con.constraint_name(is_lb)).pi
 
     def _update_constraint_bound(self, con, is_lb):
-        """Used by Constraint class."""
         name = con.constraint_name(is_lb)
         constr = self.problem.constr_by_name(name)
         constr.rhs = to_float(-1*con.lb if is_lb else con.ub)
@@ -385,7 +377,6 @@ class Model(interface.Model):
                              for var, coef in coeffs.items())
 
     def _remove_mip_constraint(self, con, is_lb):
-        """Used by Constraint class."""
         name = con.constraint_name(is_lb)
         constr = self.problem.constr_by_name(name)
         if constr is not None:
@@ -403,6 +394,7 @@ class Model(interface.Model):
     def _add_constraints(self, constraints, sloppy=False):
         super(Model, self)._add_constraints(constraints, sloppy=sloppy)
         for con in constraints:
+            # TODO: check if it supports indicator_variable
             constr = self._expr_to_mip_expr(con)
             # Attempt to add lb and ub constraints
             self._add_mip_constraint(con, True, constr)
@@ -427,10 +419,12 @@ class Model(interface.Model):
         # for c in self.problem.constrs:
         #     print(c)
 
+        # TODO: presolve. can improves numerical stability.
+
 
         status = self.problem.optimize(max_seconds=self.configuration.timeout)
 
-        # TODO: make more robust. See glpk_interface.py
+        # TODO: make more robust. See glpk_interface.py (only do relax version if user specifies a flag)
         #       handle INT_INFEASIBLE case. mip.Model has a relax method that
         #       changes all integer and binary variable types to continuous.
         #       if we call this, make sure to update the associated Variable objects.

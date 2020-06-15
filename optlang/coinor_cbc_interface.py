@@ -134,10 +134,10 @@ class Variable(interface.Variable):
 
     @property
     def dual(self):
+        if self.type != 'continuous':
+            raise ValueError('Dual is only available for continuous variables')
         if self.problem is None:
             return None
-        if self.type != 'continuous':
-            raise Exception('Dual is only available for continuous variables')
         return self.problem._var_dual(self.name)
 
     @interface.Variable.name.setter

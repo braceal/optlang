@@ -178,8 +178,9 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     def test_change_constraint_name(self):
         pass
 
-    @unittest.skip("NA")
+    @unittest.skip("Currently not supported")
     def test_clone_model_with_lp(self):
+        # TODO: support this
         pass
 
     def test_change_of_constraint_is_reflected_in_low_level_solver(self):
@@ -345,11 +346,27 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         model.objective = obj
         self.assertEqual(model.optimize(), optlang.interface.OPTIMAL)
 
-    def test_is_integer(self):
-        self.skipTest("No integers with scipy")
-
     def test_integer_variable_dual(self):
-        self.skipTest("No duals with scipy")
+        from functools import partial
+        model = self.interface.Model()
+        x = self.interface.Variable("x", lb=0)
+        y = self.interface.Variable("y", lb=0)
+        c = self.interface.Constraint(x + y, ub=1)
+        model.add(c)
+        model.objective = self.interface.Objective(x)
+
+        model.optimize()
+        print("x dual ", x.dual)
+        self.assertEqual(y.dual, -1)
+
+        x.type = "integer"
+        model.optimize()
+        self.assertRaises(ValueError, partial(getattr, x, "dual"))
+
+        x.type = "continuous"
+        model.optimize()
+        self.assertEqual(y.dual, -1)
+        self.assertEqual(x.dual, 0)
 
     def test_integer_constraint_dual(self):
         self.skipTest("No duals with scipy")
@@ -359,9 +376,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
 
     def test_large_objective(self):
         self.skipTest("Quite slow and not necessary")
-
-    def test_binary_variables(self):
-        self.skipTest("No integers with scipy")
 
     def test_implicitly_convert_milp_to_lp(self):
         self.skipTest("No integers with scipy")

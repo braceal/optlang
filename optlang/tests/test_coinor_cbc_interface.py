@@ -291,9 +291,21 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         obj_coeff = sorted(self.model.problem.objective.expr.values())
         self.assertEqual(obj_coeff, [-3.0, -1.0, 1.0, 2.0])
 
-    @unittest.skip("Not implemented yet")
     def test_imul_objective(self):
-        pass
+        self.model.objective *= 2.
+        obj_coeff = sorted(self.model.problem.objective.expr.values())
+        self.assertEqual(obj_coeff, [-2.0, 2.0])
+
+        v2, v3 = self.model.variables.values()[1:3]
+
+        self.model.objective += 4. * v2 - 3. * v3
+        self.model.objective *= 3.
+        obj_coeff = sorted(self.model.problem.objective.expr.values())
+        self.assertEqual(obj_coeff, [-9.0, -6.0, 6.0, 12.0])
+
+        self.model.objective *= -1
+        obj_coeff = sorted(self.model.problem.objective.expr.values())
+        self.assertEqual(obj_coeff, [-12.0, -6.0, 6.0, 9.0])
 
     @unittest.skip("Not implemented yet")
     def test_set_copied_objective(self):

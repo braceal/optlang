@@ -186,25 +186,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     def test_optimize_milp(self):
         pass
 
-    def test_add_constraints(self):
-        x = self.interface.Variable('x', lb=0, ub=1, type='continuous')
-        y = self.interface.Variable('y', lb=-181133.3, ub=12000., type='continuous')
-        z = self.interface.Variable('z', lb=0., ub=10., type='continuous')
-        constr1 = self.interface.Constraint(0.3 * x + 0.4 * y + 66. * z, lb=-100, ub=0., name='test')
-        constr2 = self.interface.Constraint(2.333 * x + y + 3.333, ub=100.33, name='test2')
-        constr3 = self.interface.Constraint(2.333 * x + y + z, lb=-300)
-        constr4 = self.interface.Constraint(x, lb=-300, ub=-300)
-        constr5 = self.interface.Constraint(3 * x)
-        self.model.add(constr1)
-        self.model.add(constr2)
-        self.model.add(constr3)
-        self.model.add([constr4, constr5])
-        self.assertIn(constr1.name, self.model.constraints)
-        self.assertIn(constr2.name, self.model.constraints)
-        self.assertIn(constr3.name, self.model.constraints)
-        self.assertIn(constr4.name, self.model.constraints)
-        self.assertIn(constr5.name, self.model.constraints)
-
     def test_change_of_constraint_is_reflected_in_low_level_solver(self):
         x = self.interface.Variable('x', lb=0, ub=1, type='continuous')
         y = self.interface.Variable('y', lb=-181133.3, ub=12000., type='continuous')
@@ -224,13 +205,39 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         self.assertEqual(self.model.problem.constr_by_name('test_lower').rhs, 90)
         self.assertEqual(self.model.problem.constr_by_name('test_upper').rhs, 100)
 
-    @unittest.skip("")
     def test_constraint_set_problem_to_None_caches_the_latest_expression_from_solver_instance(self):
-        pass
+        x = self.interface.Variable('x', lb=-83.3, ub=1324422.)
+        y = self.interface.Variable('y', lb=-181133.3, ub=12000.)
+        constraint = self.interface.Constraint(0.3 * x + 0.4 * y, lb=-100, name='test')
+        self.model.add(constraint)
+        z = self.interface.Variable('z', lb=2, ub=5, type='integer')
+        constraint += 77. * z
+        self.model.remove(constraint)
+        self.assertEqual(
+            (constraint.expression - (0.4 * y + 0.3 * x + 77.0 * z)).expand() - 0, 0
+        )
+        self.assertEqual(constraint.lb, -100)
+        self.assertEqual(constraint.ub, None)
 
-    @unittest.skip("")
     def test_change_of_objective_is_reflected_in_low_level_solver(self):
-        pass
+        x = self.interface.Variable('x', lb=-83.3, ub=1324422.)
+        y = self.interface.Variable('y', lb=-181133.3, ub=12000.)
+        objective = self.interface.Objective(0.3 * x + 0.4 * y, name='test', direction='max')
+        self.model.objective = objective
+        self.model.update()
+        grb_x = self.model.problem.var_by_name(x.name)
+        grb_y = self.model.problem.var_by_name(y.name)
+        expected = {grb_x: 0.3, grb_y: 0.4}
+
+        self.assertEqual(self.model.problem.objective.expr, expected)
+
+        z = self.interface.Variable('z', lb=4, ub=4, type='integer')
+        self.model.objective += 77. * z
+        self.model.update()
+        grb_z = self.model.problem.var_by_name(z.name)
+        expected[grb_z] = 77.
+
+        self.assertEqual(self.model.problem.objective.expr, expected)
 
     @unittest.skip("")
     def test_change_variable_bounds(self):
@@ -283,30 +290,6 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
     @unittest.skip("Not implemented yet")
     def test_set_linear_coefficients_constraint(self):
         pass
-
-    def test_remove_constraints(self):
-        x = self.interface.Variable('x', type='continuous')
-        y = self.interface.Variable('y', lb=-181133.3, ub=12000., type='continuous')
-        z = self.interface.Variable('z', lb=4, ub=4, type='continuous')
-        constr1 = self.interface.Constraint(0.3 * x + 0.4 * y + 66. * z, lb=-100, ub=0., name='test')
-        self.assertEqual(constr1.problem, None)
-        self.model.add(constr1)
-        self.model.update()
-        self.assertEqual(constr1.problem, self.model)
-        self.assertIn(constr1, self.model.constraints)
-        self.model.remove(constr1.name)
-        self.model.update()
-        self.assertEqual(constr1.problem, None)
-        self.assertNotIn(constr1, self.model.constraints)
-
-    def test_add_nonlinear_constraint_raises(self):
-        x = self.interface.Variable('x', type='continuous')
-        y = self.interface.Variable('y', lb=-181133.3, ub=12000., type='continuous')
-        z = self.interface.Variable('z', lb=3, ub=3, type='continuous')
-        with self.assertRaises(ValueError):
-            constraint = self.interface.Constraint(0.3 * x + 0.4 * y ** x + 66. * z, lb=-100, ub=0., name='test')
-            self.model.add(constraint)
-            self.model.update()
 
     def test_change_objective(self):
         v1, v2 = self.model.variables.values()[0:2]

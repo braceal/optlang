@@ -255,9 +255,16 @@ class ModelTestCase(abstract_test_cases.AbstractModelTestCase):
         self.assertNotEqual(inner_problem_bounds, inner_problem_bounds_new)
         self.assertEqual(bounds_new, inner_problem_bounds_new)
 
-    @unittest.skip("")
     def test_change_constraint_bounds(self):
-        pass
+        constraint = self.model.constraints[0]
+        value = 42
+        constraint.ub = value
+        self.assertEqual(constraint.ub, value)
+        constraint.lb = value
+        self.assertEqual(constraint.lb, value)
+        name = constraint.name
+        self.assertEqual(self.model.problem.constr_by_name(name + '_upper').rhs, value)
+        self.assertEqual(self.model.problem.constr_by_name(name + '_lower').rhs, -1*value)
 
     def test_initial_objective(self):
         self.assertIn('BIOMASS_Ecoli_core_w_GAM', self.model.objective.expression.__str__(), )

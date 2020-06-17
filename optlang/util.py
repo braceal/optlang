@@ -106,7 +106,8 @@ def list_available_solvers():
         A dict like {'GLPK': True, 'GUROBI': False, ...}
     """
     solvers = dict(GUROBI=False, GLPK=False, MOSEK=False, CPLEX=False,
-                   COINOR_CBC=False, SCIPY=False)
+                   COINOR_CBC=False, OSQP=False, SCIPY=False)
+
     try:
         import gurobipy
 
@@ -142,6 +143,13 @@ def list_available_solvers():
         log.debug('COINOR_CBC python bindings found at %s' % os.path.dirname(mip.__file__))
     except Exception:
         log.debug('COINOR_CBC python bindings not available.')
+    try:
+        import osqp
+
+        solvers['OSQP'] = True
+        log.debug('OSQP python bindings found at %s' % os.path.dirname(osqp.__file__))
+    except Exception:
+        log.debug('OSQP python bindings not available.')
     try:
         from scipy import optimize
         optimize.linprog
@@ -234,7 +242,7 @@ def parse_expr(expr, local_dict=None):
     elif expr["type"] == "Mul":
         return mul([parse_expr(arg, local_dict) for arg in expr["args"]])
     elif expr["type"] == "Pow":
-        return Pow(parse_expr(arg, local_dict) for arg in expr["args"])
+        return Pow(*[parse_expr(arg, local_dict) for arg in expr["args"]])
     elif expr["type"] == "Symbol":
         try:
             return local_dict[expr["name"]]

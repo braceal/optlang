@@ -2,3 +2,5 @@ sympy>=1.0.0
 six>=1.9.0
 swiglpk>=1.4.3
 mip>=1.9.1
+numpy>=1.16.0
+osqp>=0.6.1

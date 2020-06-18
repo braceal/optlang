@@ -289,22 +289,20 @@ class Objective(interface.Objective):
 
 @six.add_metaclass(inheritdocstring)
 class Configuration(interface.MathematicalProgrammingConfiguration):
-    def __init__(self, verbosity=0, timeout=None,
+    def __init__(self, verbosity=0, timeout=None, max_mip_gap_abs=1e-10,
                  max_nodes=None, max_solutions=None, relax=False,
                  emphasis=0, cuts=-1, threads=0, *args, **kwargs):
         super(Configuration, self).__init__(*args, **kwargs)
 
-        # TODO: fix error min_gapabs: tolerances=1e-10
-
         self.verbosity = verbosity
+
+        # Time limit in seconds for search
+        self.timeout = timeout
 
         # Tolerance for the quality of the optimal solution, if a solution with
         # cost c and a lower bound b are available and c - b < mip_gap_abs,
         # the search will be concluded
-        self.tolerances = 1e-10 # TODO: fix me
-
-        # Time limit in seconds for search
-        self.timeout = timeout
+        self.max_mip_gap_abs = max_mip_gap_abs
 
         # Maximum number of nodes to be explored in the search tree
         self.max_nodes = max_nodes
@@ -370,6 +368,8 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @verbosity.setter
     def verbosity(self, value):
         self._verbosity = value
+        if getattr(self, 'problem', None) is not None:
+            self.problem.problem.verbose = int(value > 1)
 
     @property
     def presolve(self):
@@ -388,6 +388,19 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @timeout.setter
     def timeout(self, value):
         self._timeout = value
+        if getattr(self, 'problem', None) is not None:
+            if value is not None:
+                self.problem.problem.max_seconds = value
+
+    @property
+    def max_mip_gap_abs(self):
+        return self._max_mip_gap_abs
+
+    @max_mip_gap_abs.setter
+    def max_mip_gap_abs(self, value):
+        self._max_mip_gap_abs = value
+        if getattr(self, 'problem', None) is not None:
+            self.problem.problem.max_mip_gap_abs = value
 
     @property
     def tolerances(self):
@@ -404,6 +417,9 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @max_nodes.setter
     def max_nodes(self, value):
         self._max_nodes = value
+        if getattr(self, 'problem', None) is not None:
+            if value is not None:
+                self.problem.problem.max_nodes = value
 
     @property
     def max_solutions(self):
@@ -412,6 +428,9 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @max_solutions.setter
     def max_solutions(self, value):
         self._max_solutions = value
+        if getattr(self, 'problem', None) is not None:
+            if value is not None:
+                self.problem.problem.max_solutions = value
 
     @property
     def relax(self):
@@ -428,6 +447,8 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @emphasis.setter
     def emphasis(self, value):
         self._emphasis = value
+        if getattr(self, 'problem', None) is not None:
+            self.problem.problem.emphasis = value
 
     @property
     def cuts(self):
@@ -436,6 +457,8 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @cuts.setter
     def cuts(self, value):
         self._cuts = value
+        if getattr(self, 'problem', None) is not None:
+            self.problem.problem.cuts = value
 
     @property
     def threads(self):
@@ -444,26 +467,12 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
     @threads.setter
     def threads(self, value):
         self._threads = value
+        if getattr(self, 'problem', None) is not None:
+            self.problem.problem.threads = value
 
 
 @six.add_metaclass(inheritdocstring)
 class Model(interface.Model):
-
-    def _configure_model(self):
-        self.problem.verbose = 1 if self.configuration.verbosity > 1 else 0
-        self.problem.max_mip_gap_abs = self.configuration.tolerances
-        self.problem.threads = self.configuration.threads
-        self.problem.emphasis = self.configuration.emphasis
-        self.problem.cuts = self.configuration.cuts
-        if self.configuration.timeout is not None:
-            self.problem.max_seconds = self.configuration.timeout
-        if self.configuration.max_nodes is not None:
-            self.problem.max_nodes = self.configuration.max_nodes
-        if self.configuration.max_solutions is not None:
-            self.problem.max_solutions = self.configuration.max_solutions
-        if self.configuration.relax:
-            self.problem.relax()
-            self._initialize_model_from_problem(self.problem)
 
     def _initialize_problem(self):
         self.problem = mip.Model(solver_name=mip.CBC)
@@ -590,13 +599,14 @@ class Model(interface.Model):
             self._remove_mip_constraint(con, False)
 
     def _optimize(self):
-        self._configure_model()
+        if self.configuration.relax:
+            self.problem.relax()
+            self._initialize_model_from_problem(self.problem)
         # TODO: could set self.problem.threads = -1 to use all available cores
         # TODO: could pass in max_nodes, max_solutions, relax by setting them
         #       in configuration
 
         # TODO: presolve. can improve numerical stability.
-
         status = self.problem.optimize()
         # TODO: make more robust. See glpk_interface.py
         #       (only do relax version if user specifies a flag)

@@ -602,17 +602,11 @@ class Model(interface.Model):
         if self.configuration.relax:
             self.problem.relax()
             self._initialize_model_from_problem(self.problem)
-        # TODO: could set self.problem.threads = -1 to use all available cores
-        # TODO: could pass in max_nodes, max_solutions, relax by setting them
-        #       in configuration
 
         # TODO: presolve. can improve numerical stability.
         status = self.problem.optimize()
         # TODO: make more robust. See glpk_interface.py
-        #       (only do relax version if user specifies a flag)
-        #       handle INT_INFEASIBLE case. mip.Model has a relax method that
-        #       changes all integer and binary variable types to continuous.
-        #       if we call this, make sure to update the associated Variable objects.
+
         return _MIP_STATUS_TO_STATUS[status]
 
     @interface.Model.objective.setter

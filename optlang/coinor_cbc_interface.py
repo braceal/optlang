@@ -36,6 +36,7 @@ from optlang import interface
 from optlang import symbolics
 
 import mip
+import sympy
 from math import isclose, ceil, floor
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,8 @@ _DIR_TO_MIP_DIR = {
 _MIP_DIR_TO_DIR = dict(
     [(val, key) for key, val in six.iteritems(_DIR_TO_MIP_DIR)]
 )
+
+ZERO = sympy.core.numbers.Float(0)
 
 # Needs to be used for to_bound during _initialize_model_from_problem
 INFINITY = 1.7976931348623157e+308
@@ -269,6 +272,7 @@ class Objective(interface.Objective):
 
         self.problem.update()
         coeffs = self._expression.as_coefficients_dict()
+        coeffs.pop(ZERO, None)
         coeffs.update(coefficients)
         self._expression = to_symbolic_expr(coeffs)
         self.problem.objective = self
@@ -285,17 +289,19 @@ class Objective(interface.Objective):
 
 @six.add_metaclass(inheritdocstring)
 class Configuration(interface.MathematicalProgrammingConfiguration):
-    def __init__(self, verbosity=0, tolerance=1e-10, timeout=float('inf'),
+    def __init__(self, verbosity=0, timeout=None,
                  max_nodes=None, max_solutions=None, relax=False,
                  emphasis=0, cuts=-1, threads=0, *args, **kwargs):
         super(Configuration, self).__init__(*args, **kwargs)
+
+        # TODO: fix error min_gapabs: tolerances=1e-10
 
         self.verbosity = verbosity
 
         # Tolerance for the quality of the optimal solution, if a solution with
         # cost c and a lower bound b are available and c - b < mip_gap_abs,
         # the search will be concluded
-        self.tolerance = tolerance
+        self.tolerances = 1e-10 # TODO: fix me
 
         # Time limit in seconds for search
         self.timeout = timeout
@@ -335,6 +341,28 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
         # threads may improve the solution time but also increases the memory consumption
         self.threads = threads
 
+    #     if 'tolerances' in kwargs:
+    #         for key, val in six.iteritems(kwargs['tolerances']):
+    #             if key in self._tolerance_functions():
+    #                 setattr(self.tolerances, key, val)
+
+    # def __getstate__(self):
+    #     return {'presolve': self.presolve,
+    #             'verbosity': self.verbosity,
+    #             'timeout': self.timeout,
+    #             'tolerances': {'feasibility': self.tolerances.feasibility}
+    #             }
+
+    # def __setstate__(self, state):
+    #     self.__init__()
+    #     for key, val in six.iteritems(state):
+    #         if key != 'tolerances':
+    #             setattr(self, key, val)
+    #     print(state)
+    #     for key, val in six.iteritems(state['tolerances']):
+    #         if key in self._tolerance_functions():
+    #             setattr(self.tolerances, key, val)
+
     @property
     def verbosity(self):
         return self._verbosity
@@ -362,12 +390,12 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
         self._timeout = value
 
     @property
-    def tolerance(self):
-        return self._tolerance
+    def tolerances(self):
+        return self._tolerances
 
-    @tolerance.setter
-    def tolerance(self, value):
-        self._tolerance = value
+    @tolerances.setter
+    def tolerances(self, value):
+        self._tolerances = value
 
     @property
     def max_nodes(self):
@@ -423,11 +451,12 @@ class Model(interface.Model):
 
     def _configure_model(self):
         self.problem.verbose = 1 if self.configuration.verbosity > 1 else 0
-        self.problem.max_mip_gap_abs = self.configuration.tolerance
-        self.problem.max_seconds = self.configuration.timeout
+        self.problem.max_mip_gap_abs = self.configuration.tolerances
         self.problem.threads = self.configuration.threads
         self.problem.emphasis = self.configuration.emphasis
         self.problem.cuts = self.configuration.cuts
+        if self.configuration.timeout is not None:
+            self.problem.max_seconds = self.configuration.timeout
         if self.configuration.max_nodes is not None:
             self.problem.max_nodes = self.configuration.max_nodes
         if self.configuration.max_solutions is not None:
@@ -479,10 +508,12 @@ class Model(interface.Model):
                               problem=self)
 
     def _var_primal(self, name):
-        return self.problem.var_by_name('v_' + name).x
+        primal = self.problem.var_by_name('v_' + name).x
+        return 0. if primal is None else primal
 
     def _var_dual(self, name):
-        return self.problem.var_by_name('v_' + name).rc
+        dual = self.problem.var_by_name('v_' + name).rc
+        return 0. if dual is None else dual
 
     def _update_var_lb(self, name, lb):
         self.problem.var_by_name('v_' + name).lb = to_float(lb, True)
@@ -567,7 +598,6 @@ class Model(interface.Model):
         # TODO: presolve. can improve numerical stability.
 
         status = self.problem.optimize()
-
         # TODO: make more robust. See glpk_interface.py
         #       (only do relax version if user specifies a flag)
         #       handle INT_INFEASIBLE case. mip.Model has a relax method that
@@ -579,7 +609,6 @@ class Model(interface.Model):
     def objective(self, value):
         super(Model, Model).objective.fset(self, value)
         self.update()
-
         self.problem.objective = self._expr_to_mip_expr(value)
         self.problem.sense = _DIR_TO_MIP_DIR[value.direction]
         value.problem = self

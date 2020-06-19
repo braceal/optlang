@@ -640,10 +640,20 @@ class Model(interface.Model):
 
     def _remove_constraints(self, constraints):
         super(Model, self)._remove_constraints(constraints)
-        for con in constraints:
+        cons = []
+        for name in map(lambda c: 'c_' + c.name, constraints):
+            cl = self.problem.constr_by_name(name + '_lower')
+            cu = self.problem.constr_by_name(name + '_upper')
+            if cl is not None:
+                cons.append(cl)
+            if cu is not None:
+                cons.append(cu)
+
             # Remove lb and ub constraints
-            self._remove_mip_constraint(con, True)
-            self._remove_mip_constraint(con, False)
+            # self._remove_mip_constraint(con, True)
+            # self._remove_mip_constraint(con, False)
+
+        self.problem.remove(cons)
 
     def _optimize(self):
         if self.configuration.relax:

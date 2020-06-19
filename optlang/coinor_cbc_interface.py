@@ -289,20 +289,19 @@ class Objective(interface.Objective):
 
 @six.add_metaclass(inheritdocstring)
 class Configuration(interface.MathematicalProgrammingConfiguration):
-    def __init__(self, verbosity=0, timeout=None, max_mip_gap_abs=1e-10,
+    def __init__(self, verbosity=0, timeout=None, presolve='auto',
                  max_nodes=None, max_solutions=None, relax=False,
                  emphasis=0, cuts=-1, threads=0, *args, **kwargs):
         super(Configuration, self).__init__(*args, **kwargs)
 
         self.verbosity = verbosity
 
+        # Enables/disables pre-processing. Pre-processing tries to improve your MIP
+        # formulation. -1 means automatic, 0 means off and 1 means on.
+        self.presolve = presolve
+
         # Time limit in seconds for search
         self.timeout = timeout
-
-        # Tolerance for the quality of the optimal solution, if a solution with
-        # cost c and a lower bound b are available and c - b < mip_gap_abs,
-        # the search will be concluded
-        self.max_mip_gap_abs = max_mip_gap_abs
 
         # Maximum number of nodes to be explored in the search tree
         self.max_nodes = max_nodes
@@ -339,27 +338,10 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
         # threads may improve the solution time but also increases the memory consumption
         self.threads = threads
 
-    #     if 'tolerances' in kwargs:
-    #         for key, val in six.iteritems(kwargs['tolerances']):
-    #             if key in self._tolerance_functions():
-    #                 setattr(self.tolerances, key, val)
-
-    # def __getstate__(self):
-    #     return {'presolve': self.presolve,
-    #             'verbosity': self.verbosity,
-    #             'timeout': self.timeout,
-    #             'tolerances': {'feasibility': self.tolerances.feasibility}
-    #             }
-
-    # def __setstate__(self, state):
-    #     self.__init__()
-    #     for key, val in six.iteritems(state):
-    #         if key != 'tolerances':
-    #             setattr(self, key, val)
-    #     print(state)
-    #     for key, val in six.iteritems(state['tolerances']):
-    #         if key in self._tolerance_functions():
-    #             setattr(self.tolerances, key, val)
+        if 'tolerances' in kwargs:
+            for key, val in six.iteritems(kwargs['tolerances']):
+                if key in self._tolerance_functions():
+                    setattr(self.tolerances, key, val)
 
     @property
     def verbosity(self):
@@ -373,13 +355,14 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
 
     @property
     def presolve(self):
-        return False
+        return self._presolve
 
     @presolve.setter
     def presolve(self, value):
-        # TODO: implement if possible
-        if value:
-            raise ValueError('Not implemented')
+        self._presolve = value
+        if getattr(self, 'problem', None) is not None:
+            value = -1 if value == 'auto' else int(value)
+            self.problem.problem.preprocess = value
 
     @property
     def timeout(self):
@@ -391,24 +374,6 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
         if getattr(self, 'problem', None) is not None:
             if value is not None:
                 self.problem.problem.max_seconds = value
-
-    @property
-    def max_mip_gap_abs(self):
-        return self._max_mip_gap_abs
-
-    @max_mip_gap_abs.setter
-    def max_mip_gap_abs(self, value):
-        self._max_mip_gap_abs = value
-        if getattr(self, 'problem', None) is not None:
-            self.problem.problem.max_mip_gap_abs = value
-
-    @property
-    def tolerances(self):
-        return self._tolerances
-
-    @tolerances.setter
-    def tolerances(self, value):
-        self._tolerances = value
 
     @property
     def max_nodes(self):
@@ -469,6 +434,77 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
         self._threads = value
         if getattr(self, 'problem', None) is not None:
             self.problem.problem.threads = value
+
+    def __getstate__(self):
+        return {'presolve': self.presolve,
+                'timeout': self.timeout,
+                'verbosity': self.verbosity,
+                'max_nodes': self.max_nodes,
+                'max_solutions': self.max_solutions,
+                'relax': self.relax,
+                'emphasis': self.emphasis,
+                'cuts': self.cuts,
+                'threads': self.threads,
+                'tolerances': {'feasibility': self.tolerances.feasibility,
+                               'optimality': self.tolerances.optimality,
+                               'integrality': self.tolerances.integrality}
+                }
+
+    def __setstate__(self, state):
+        for key, val in six.iteritems(state):
+            if key != 'tolerances':
+                setattr(self, key, val)
+        if 'tolerances' in state:
+            for key, val in six.iteritems(state['tolerances']):
+                if key in self._tolerance_functions():
+                    setattr(self.tolerances, key, val)
+
+    def _get_feasibility(self):
+        return self.problem.problem.infeas_tol
+
+    def _set_feasibility(self, value):
+        self.problem.problem.infeas_tol = value
+
+    def _get_integrality(self):
+        return self.problem.problem.integer_tol
+
+    def _set_integrality(self, value):
+        self.problem.problem.integer_tol = value
+
+    def _get_optimality(self):
+        return self.problem.problem.max_mip_gap_abs
+
+    def _set_optimality(self, value):
+        self.problem.problem.max_mip_gap_abs = value
+
+    def _tolerance_functions(self):
+        return {
+            # 1e-6. Tightening this value can increase the numerical precision
+            # but also probably increasethe running time. As floating point
+            # computations always involve some loss of precision, values too
+            # close to zero will likely render some models impossible to optimize.
+            'feasibility': (
+                self._get_feasibility,
+                self._set_feasibility
+            ),
+            # Tolerance for the quality of the optimal solution, if a solution with
+            # cost c and a lower bound b are available and c - b < mip_gap_abs,
+            # the search will be concluded
+            'optimality': (
+                self._get_optimality,
+                self._set_optimality
+            ),
+            # Maximum distance to the nearest integer for a variable to be
+            # considered with an integervalue. Default value: 1e-6. Tightening
+            # this value can increase the numerical precision but also probably
+            # increase the running time. As floating point computations always
+            # involve someloss of precision, values too close to zero will likely
+            # render some models impossible to optimize.
+            'integrality': (
+                self._get_integrality,
+                self._set_integrality
+            )
+        }
 
 
 @six.add_metaclass(inheritdocstring)

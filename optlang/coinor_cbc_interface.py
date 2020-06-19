@@ -639,19 +639,29 @@ class Model(interface.Model):
             self._add_mip_constraint(con, False, constr)
 
     def _remove_constraints(self, constraints):
-        super(Model, self)._remove_constraints(constraints)
+        not_removed = True
+        if len(constraints) > 350:  # Need to figure out a good threshold here
+            keys = map(lambda c: c.name, constraints)
+            self._constraints = self._constraints.fromkeys(set(self._constraints.keys()).difference(set(keys)))
+            not_removed = False
+
         cons = []
-        for name in map(lambda c: 'c_' + c.name, constraints):
+        for con in constraints:
+
+            if not_removed:
+                try:
+                    del self._constraints[con.name]
+                except KeyError:
+                    raise LookupError("Constraint %s not in solver" % con)
+                con.problem = None
+
+            name = 'c_' + con.name
             cl = self.problem.constr_by_name(name + '_lower')
             cu = self.problem.constr_by_name(name + '_upper')
             if cl is not None:
                 cons.append(cl)
             if cu is not None:
                 cons.append(cu)
-
-            # Remove lb and ub constraints
-            # self._remove_mip_constraint(con, True)
-            # self._remove_mip_constraint(con, False)
 
         self.problem.remove(cons)
 
@@ -660,7 +670,6 @@ class Model(interface.Model):
             self.problem.relax()
             self._initialize_model_from_problem(self.problem)
 
-        # TODO: presolve. can improve numerical stability.
         status = self.problem.optimize()
         # TODO: make more robust. See glpk_interface.py
 

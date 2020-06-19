@@ -454,6 +454,8 @@ class Configuration(interface.MathematicalProgrammingConfiguration):
         for key, val in six.iteritems(state):
             if key != 'tolerances':
                 setattr(self, key, val)
+        # TODO: remove if check before final merge. Only here for backwards
+        #       compatability for current pickle files stored in cobrapy
         if 'tolerances' in state:
             for key, val in six.iteritems(state['tolerances']):
                 if key in self._tolerance_functions():

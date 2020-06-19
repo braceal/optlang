@@ -581,9 +581,18 @@ class Model(interface.Model):
                                  ub=to_float(var.ub, False))
 
     def _remove_variables(self, variables):
-        super(Model, self)._remove_variables(variables)
+        # TODO: optimization for removing all variables?
+        if self.objective is not None:
+            self.objective._expression = self.objective.expression.xreplace(
+                {var: 0 for var in variables})
+        mip_vars = []
         for var in variables:
-            self.problem.remove(self.problem.var_by_name('v_' + var.name))
+            name = var.name
+            del self._variables_to_constraints_mapping[name]
+            var.problem = None
+            del self._variables[name]
+            mip_vars.append(self.problem.var_by_name('v_' + name))
+        self.problem.remove(mip_vars)
 
     def _constr_primal(self, con, is_lb):
         slack = self.problem.constr_by_name('c_' + con.constraint_name(is_lb)).slack

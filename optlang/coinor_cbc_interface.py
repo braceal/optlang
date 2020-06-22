@@ -249,6 +249,7 @@ class Constraint(interface.Constraint):
 @six.add_metaclass(inheritdocstring)
 class Objective(interface.Objective):
     def __init__(self, expression, sloppy=False, **kwargs):
+        self._changed_expression = {}
         super(Objective, self).__init__(expression, sloppy=sloppy, **kwargs)
         if not (sloppy or self.is_Linear):
             raise ValueError(
@@ -266,25 +267,61 @@ class Objective(interface.Objective):
         if getattr(self, 'problem', None) is not None:
             self.problem.problem.sense = _DIR_TO_MIP_DIR[value]
 
+    def _get_expression(self):
+        if (self.problem is not None and self._changed_expression and
+            len(self.problem._variables) > 0):
+
+            coeffs = self._expression.as_coefficients_dict()
+
+            new_vars = set(self._changed_expression) - set(coeffs)
+
+            self._expression += symbolics.add([var * self._changed_expression[var]
+                                              for var in new_vars])
+
+            # Substitute var in expression with var * coef / old_coef
+            updates = [(var, var * coef / coeffs[var])
+                       for var, coef in self._changed_expression.items()
+                       if var not in new_vars]
+
+            self._expression = self._expression.subs(updates)
+            self._changed_expression = {}
+
+        return self._expression
+
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:
             raise Exception('Can\'t change coefficients if objective is not associated with a model.')
 
         self.problem.update()
-        coeffs = self._expression.as_coefficients_dict()
-        coeffs.pop(ZERO, None)
-        coeffs.update(coefficients)
-        self._expression = to_symbolic_expr(coeffs)
-        self.problem.objective = self
+        model = self.problem.problem
+        expr = model.objective.expr
+        names = set(var.name for var in coefficients)
 
+        obj = mip.xsum(model.var_by_name('v_' + var.name) * coef
+                       for var, coef in coefficients.items()) \
+            + mip.xsum(var * coef for var, coef in expr.items()
+                       if var.name[2:] not in names) \
+            + model.objective.const
+
+        # TODO: why does this not work? It would likely be faster
+        # obj_update = mip.xsum(model.var_by_name('v_' + var.name) * coef
+        #                       for var, coef in coefficients.items()) \
+        #            - mip.xsum(-var * coef for var, coef in expr.items()
+        #                       if var.name[2:] in names)
+        # model.objective.add_expr(obj_update)
+
+        self._changed_expression.update(coefficients)
+        model.objective = obj
 
     def get_linear_coefficients(self, variables):
         if self.problem is None:
             raise Exception('Can\'t get coefficients from solver if objective is not in a model')
 
         self.problem.update()
-        coeffs = self._expression.as_coefficients_dict()
-        return {v: coeffs.get(v, 0) for v in variables}
+
+        coeffs = self.problem.problem.objective.expr
+        mip_var = self.problem.problem.var_by_name
+        return {v: coeffs.get(mip_var('v_' + v.name), 0) for v in variables}
 
 
 @six.add_metaclass(inheritdocstring)
@@ -583,8 +620,7 @@ class Model(interface.Model):
     def _remove_variables(self, variables):
         # TODO: optimization for removing all variables?
         if self.objective is not None:
-            self.objective._expression = self.objective.expression.xreplace(
-                {var: 0 for var in variables})
+            self.objective._changed_expression.update({var: 0 for var in variables})
         mip_vars = []
         for var in variables:
             name = var.name

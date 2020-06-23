@@ -733,9 +733,8 @@ class Model(interface.Model):
                     raise LookupError("Constraint %s not in solver" % con)
                 con.problem = None
 
-            name = 'c_' + con.name
-            cl = self.problem.constr_by_name(name + '_lower')
-            cu = self.problem.constr_by_name(name + '_upper')
+            cl = self.problem.constr_by_name(con.constraint_name(True))
+            cu = self.problem.constr_by_name(con.constraint_name(False))
             if cl is not None:
                 cons.append(cl)
             if cu is not None:

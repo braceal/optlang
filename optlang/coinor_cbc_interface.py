@@ -170,8 +170,8 @@ class Constraint(interface.Constraint):
 
     def constraint_name(self, is_lb):
         if is_lb:
-            return self.name + '_lower'
-        return self.name + '_upper'
+            return 'c_' + self.name + '_lower'
+        return 'c_' + self.name + '_upper'
 
     @property
     def primal(self):
@@ -242,8 +242,19 @@ class Constraint(interface.Constraint):
             raise Exception('Can\'t get coefficients from solver if constraint is not in a model')
 
         self.problem.update()
-        coeffs = self._expression.as_coefficients_dict()
-        return {v: coeffs.get(v, 0) for v in variables}
+
+        mip_var = self.problem.problem.var_by_name
+        mip_constr = self.problem.problem.constr_by_name
+
+        # Get positive coeffs
+        constr = mip_constr(self.constraint_name(is_lb=False))
+        sign = 1
+        if constr is None:
+            constr = mip_constr(self.constraint_name(is_lb=True))
+            sign = -1
+
+        coeffs = constr.expr.expr
+        return {v: sign * coeffs.get(mip_var('v_' + v.name), 0) for v in variables}
 
 
 @six.add_metaclass(inheritdocstring)
@@ -631,15 +642,15 @@ class Model(interface.Model):
         self.problem.remove(mip_vars)
 
     def _constr_primal(self, con, is_lb):
-        slack = self.problem.constr_by_name('c_' + con.constraint_name(is_lb)).slack
+        slack = self.problem.constr_by_name(con.constraint_name(is_lb)).slack
         return con.lb + slack if is_lb else con.ub - slack
 
     def _constr_dual(self, con, is_lb):
-        return self.problem.constr_by_name('c_' + con.constraint_name(is_lb)).pi
+        return self.problem.constr_by_name(con.constraint_name(is_lb)).pi
 
     def _update_constraint_bound(self, con, is_lb):
         name = con.constraint_name(is_lb)
-        constr = self.problem.constr_by_name('c_' + name)
+        constr = self.problem.constr_by_name(name)
         constr.rhs = to_float(-1*con.lb if is_lb else con.ub)
 
     def _expr_to_mip_expr(self, expr):
@@ -650,7 +661,7 @@ class Model(interface.Model):
 
     def _remove_mip_constraint(self, con, is_lb):
         name = con.constraint_name(is_lb)
-        constr = self.problem.constr_by_name('c_' + name)
+        constr = self.problem.constr_by_name(name)
         if constr is not None:
             self.problem.remove(constr)
 
@@ -660,7 +671,7 @@ class Model(interface.Model):
             constr = self._expr_to_mip_expr(con)
 
         # TODO: check if mip supports indicator_variable
-        name = 'c_' + con.constraint_name(is_lb)
+        name = con.constraint_name(is_lb)
         if is_lb and con.lb is not None:
            self.problem.add_constr(-constr <= -con.lb, name)
         elif not is_lb and con.ub is not None:

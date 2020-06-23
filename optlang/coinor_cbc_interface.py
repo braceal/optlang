@@ -36,7 +36,6 @@ from optlang import interface
 from optlang import symbolics
 
 import mip
-import sympy
 from math import isclose, ceil, floor
 
 log = logging.getLogger(__name__)
@@ -72,8 +71,6 @@ _DIR_TO_MIP_DIR = {
 _MIP_DIR_TO_DIR = dict(
     [(val, key) for key, val in six.iteritems(_DIR_TO_MIP_DIR)]
 )
-
-ZERO = sympy.core.numbers.Float(0)
 
 # Needs to be used for to_bound during _initialize_model_from_problem
 INFINITY = 1.7976931348623157e+308

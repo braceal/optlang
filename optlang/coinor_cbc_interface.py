@@ -166,6 +166,7 @@ class Constraint(interface.Constraint):
     _INDICATOR_CONSTRAINT_SUPPORT = False
 
     def __init__(self, expression, sloppy=False, *args, **kwargs):
+        self._changed_expression = {}
         super(Constraint, self).__init__(expression, sloppy=sloppy, *args, **kwargs)
 
     def constraint_name(self, is_lb):
@@ -223,6 +224,27 @@ class Constraint(interface.Constraint):
         if getattr(self, 'problem', None) is not None:
             raise Exception('COIN-OR CBC doesn\'t support constraint name change')
 
+    def _get_expression(self):
+        if (self.problem is not None and self._changed_expression and
+            len(self.problem._variables) > 0):
+
+            coeffs = self._expression.as_coefficients_dict()
+
+            new_vars = set(self._changed_expression) - set(coeffs)
+
+            self._expression += symbolics.add([var * self._changed_expression[var]
+                                              for var in new_vars])
+
+            # Substitute var in expression with var * coef / old_coef
+            updates = [(var, var * coef / coeffs[var])
+                       for var, coef in self._changed_expression.items()
+                       if var not in new_vars]
+
+            self._expression = self._expression.subs(updates)
+            self._changed_expression = {}
+
+        return self._expression
+
     def _get_mip_constr_expr(self):
         """Returns mip coefficient dictionary."""
         mip_constr = self.problem.problem.constr_by_name
@@ -254,14 +276,7 @@ class Constraint(interface.Constraint):
         self.problem._add_mip_constraint(self, True, constr)
         self.problem._add_mip_constraint(self, False, constr)
 
-        coeffs = self._expression.as_coefficients_dict()
-        coeffs.update(coefficients)
-        self._expression = to_symbolic_expr(coeffs)
-
-        # # _remove_constraints deletes reference to self.problem
-        # problem = self.problem
-        # problem._remove_constraints([self])
-        # problem._add_constraints([self])
+        self._changed_expression.update(coefficients)
 
     def get_linear_coefficients(self, variables):
         if self.problem is None:

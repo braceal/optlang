@@ -223,38 +223,54 @@ class Constraint(interface.Constraint):
         if getattr(self, 'problem', None) is not None:
             raise Exception('COIN-OR CBC doesn\'t support constraint name change')
 
+    def _get_mip_constr_expr(self):
+        """Returns mip coefficient dictionary."""
+        mip_constr = self.problem.problem.constr_by_name
+        constr = mip_constr(self.constraint_name(is_lb=False))
+        sign = 1
+        if constr is None:
+            constr = mip_constr(self.constraint_name(is_lb=True))
+            sign = -1
+        return (sign * constr.expr).expr
+
     def set_linear_coefficients(self, coefficients):
         if self.problem is None:
             raise Exception('Can\'t change coefficients if constraint is not associated with a model.')
 
         self.problem.update()
+
+        mip_var = self.problem.problem.var_by_name
+
+        expr = self._get_mip_constr_expr()
+        names = set(var.name for var in coefficients)
+
+        constr = mip.xsum(mip_var('v_' + var.name) * coef
+                       for var, coef in coefficients.items()) \
+               + mip.xsum(var * coef for var, coef in expr.items()
+                       if var.name[2:] not in names)
+
+        self.problem._remove_mip_constraint(self, True)
+        self.problem._remove_mip_constraint(self, False)
+        self.problem._add_mip_constraint(self, True, constr)
+        self.problem._add_mip_constraint(self, False, constr)
+
         coeffs = self._expression.as_coefficients_dict()
         coeffs.update(coefficients)
         self._expression = to_symbolic_expr(coeffs)
 
-        # _remove_constraints deletes reference to self.problem
-        problem = self.problem
-        problem._remove_constraints([self])
-        problem._add_constraints([self])
+        # # _remove_constraints deletes reference to self.problem
+        # problem = self.problem
+        # problem._remove_constraints([self])
+        # problem._add_constraints([self])
 
     def get_linear_coefficients(self, variables):
         if self.problem is None:
             raise Exception('Can\'t get coefficients from solver if constraint is not in a model')
 
         self.problem.update()
-
         mip_var = self.problem.problem.var_by_name
-        mip_constr = self.problem.problem.constr_by_name
-
-        # Get positive coeffs
-        constr = mip_constr(self.constraint_name(is_lb=False))
-        sign = 1
-        if constr is None:
-            constr = mip_constr(self.constraint_name(is_lb=True))
-            sign = -1
-
-        coeffs = constr.expr.expr
-        return {v: sign * coeffs.get(mip_var('v_' + v.name), 0) for v in variables}
+        expr = self._get_mip_constr_expr()
+        return {v: expr.get(mip_var('v_' + v.name), 0) for v in variables}
 
 
 @six.add_metaclass(inheritdocstring)
